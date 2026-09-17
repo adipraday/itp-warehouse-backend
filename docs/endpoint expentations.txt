@@ -1,0 +1,179 @@
+API ENDPOINT SPECIFICATION - WAREHOUSE MVP
+
+KONVENSI
+- Base path: /api
+- Semua list endpoint mendukung pagination: page, per_page (default 20, maksimum 100).
+- Filter dikirim sebagai query parameter; gunakan format tanggal YYYY-MM-DD.
+- Endpoint state transition memakai POST dan hanya menerima status asal yang valid. Dokumen COMPLETED tidak dapat di-cancel; koreksi dilakukan melalui dokumen reversal manual.
+- Backend menjalankan complete/approve secara atomic dan idempoten. Client mengirim Idempotency-Key untuk request tersebut; retry dengan key, endpoint, dan body yang identik mengembalikan hasil awal dan tidak membuat dampak stok kedua. Key yang sama dengan endpoint atau body berbeda ditolak HTTP 409 IDEMPOTENCY_KEY_REUSED.
+- Dokumentasi ini sengaja belum mencakup authentication dan authorization.
+
+ATURAN RESPONSE MINIMAL
+- GET list: { data: [], meta: { page, per_page, total } }
+- GET detail dan command berhasil: { data: {} }
+- Validation error: { error: { code: "VALIDATION_ERROR", message: "...", details: [] } }
+- Conflict status/stok/idempotency: HTTP 409.
+
+1. MASTER WAREHOUSE
+GET    /warehouses
+GET    /warehouses/:id
+POST   /warehouses
+PUT    /warehouses/:id
+GET    /warehouses/:id/stocks
+GET    /warehouses/:id/stock-summary
+
+DELETE hanya diizinkan bila warehouse belum direferensikan; bila tidak, gunakan status inactive bila fitur itu ditambahkan.
+
+2. ITEM / PRODUCT MANAGEMENT
+GET    /items
+GET    /items/:id
+POST   /items
+PUT    /items/:id
+GET    /items/search?q=router
+GET    /items/:id/stocks?warehouse_id=1
+GET    /items/:id/cost?warehouse_id=1
+GET    /items/:id/cost-history?warehouse_id=1
+
+Stok item selalu dikembalikan per warehouse. Jangan sediakan endpoint yang dapat mengubah stocks secara langsung.
+
+3. CONTACT MANAGEMENT
+GET    /contacts?type=supplier
+GET    /contacts?type=customer
+GET    /contacts/:id
+POST   /contacts
+PUT    /contacts/:id
+
+4. STOCK READ MODEL
+GET /stocks?warehouse_id=1&item_id=10
+GET /stocks/low-stock?warehouse_id=1
+GET /stocks/out-of-stock?warehouse_id=1
+
+Tidak memakai /stocks/:warehouse_id agar tidak ambigu dengan resource seperti low-stock. Tidak ada POST, PUT, atau DELETE /stocks.
+
+5. INBOUND INVENTORY
+GET    /inbounds?warehouse_id=1&status=DRAFT&from=2026-08-01&to=2026-08-31
+GET    /inbounds/:id
+POST   /inbounds
+PUT    /inbounds/:id
+DELETE /inbounds/:id
+POST   /inbounds/:id/complete
+POST   /inbounds/:id/cancel
+
+Flow: DRAFT -> COMPLETED atau CANCELLED.
+Complete membuat stock mutation IN dan cost layer FIFO. Hanya DRAFT yang boleh PUT/DELETE/cancel; koreksi INBOUND completed dibuat sebagai OUTBOUND reversal baru dengan reversal_of_transaction_id dan reason.
+
+6. OUTBOUND INVENTORY
+GET    /outbounds?warehouse_id=1&status=DRAFT&from=2026-08-01&to=2026-08-31
+GET    /outbounds/:id
+POST   /outbounds
+PUT    /outbounds/:id
+DELETE /outbounds/:id
+POST   /outbounds/:id/complete
+POST   /outbounds/:id/cancel
+
+Flow: DRAFT -> COMPLETED atau CANCELLED.
+Complete memvalidasi stok, mengalokasikan FIFO, lalu membuat mutation OUT. Stok tidak boleh negatif. Koreksi OUTBOUND completed dibuat sebagai INBOUND reversal baru dengan reversal_of_transaction_id dan reason.
+
+7. STOCK LEDGER
+GET /stock-mutations?warehouse_id=1&item_id=10&type=OUT&direction=OUT&from=2026-08-01&to=2026-08-31
+GET /stock-mutations/:id
+
+Ledger bersifat read-only. Tidak ada POST, PUT, atau DELETE /stock-mutations. Filter dapat mencakup source_type dan source_id untuk traceability.
+
+8. STOCK TRANSFER
+GET    /stock-transfers?source_warehouse_id=1&destination_warehouse_id=2&status=DRAFT
+GET    /stock-transfers/:id
+POST   /stock-transfers
+PUT    /stock-transfers/:id
+DELETE /stock-transfers/:id
+POST   /stock-transfers/:id/approve
+POST   /stock-transfers/:id/complete
+POST   /stock-transfers/:id/cancel
+
+Flow: DRAFT -> APPROVED -> COMPLETED, atau DRAFT/APPROVED -> CANCELLED.
+Complete memindahkan FIFO allocation dari gudang asal ke gudang tujuan. Sistem mencatat OUT dan IN ledger, tanpa revenue/COGS. Koreksi transfer completed dibuat sebagai transfer balik baru yang menyimpan reversal_of_transfer_id dan reason.
+
+9. RETURN
+GET    /returns?warehouse_id=1&type=RETURN_CUSTOMER&status=DRAFT
+GET    /returns/:id
+POST   /returns
+PUT    /returns/:id
+DELETE /returns/:id
+POST   /returns/:id/approve
+POST   /returns/:id/complete
+POST   /returns/:id/reject
+POST   /returns/:id/cancel
+
+Flow: DRAFT -> APPROVED -> COMPLETED; DRAFT/APPROVED -> REJECTED atau CANCELLED.
+Customer return wajib membawa original_invoice_id yang bertipe SALES; supplier return wajib membawa original_inventory_transaction_id yang bertipe INBOUND. Tepat satu referensi asal wajib terisi. Item harus ada pada dokumen asal dan quantity retur tidak boleh melebihi quantity yang masih eligible untuk diretur.
+
+Detail DAMAGED wajib beraksi SCRAP dan tidak menambah available stock. Detail REPLACE hanya valid untuk customer return dengan condition GOOD. COMPLETE menjalankan dua dampak atomik: (1) barang retur masuk stock IN dan cost layer baru memakai biaya historis; (2) sistem membuat OUTBOUND replacement yang tertaut ke return, bernilai jual 0, tetapi tetap memakai FIFO/HPP dan mengurangi stok. Jika stok pengganti tidak cukup, seluruh COMPLETE ditolak. Untuk MVP, replacement menggunakan item dan quantity yang sama; penggantian SKU/quantity berbeda berada di luar scope.
+
+10. STOCK OPNAME
+GET    /stock-opnames?warehouse_id=1&status=DRAFT
+GET    /stock-opnames/:id
+POST   /stock-opnames
+PUT    /stock-opnames/:id
+DELETE /stock-opnames/:id
+POST   /stock-opnames/:id/submit
+POST   /stock-opnames/:id/approve
+POST   /stock-opnames/:id/cancel
+
+Flow: DRAFT -> SUBMITTED -> APPROVED, atau DRAFT/SUBMITTED -> CANCELLED.
+Approve membuat ADJUSTMENT mutation dan FIFO allocation/layer sesuai arah selisih. Selisih positif membuat cost layer dengan unit_cost 0; selisih negatif memakai FIFO allocation. Hanya DRAFT yang dapat diubah/dihapus. Koreksi opname APPROVED dibuat sebagai opname adjustment baru, bukan cancel.
+
+11. COST / HPP
+GET /cost-layers?warehouse_id=1&item_id=10&remaining_only=true
+GET /cost-layers/:id
+GET /items/:id/cost?warehouse_id=1
+GET /items/:id/cost-history?warehouse_id=1
+GET /cost-summary?warehouse_id=1&from=2026-08-01&to=2026-08-31
+
+Cost layer dan allocation dibuat backend oleh transaksi inventory; tidak ada CRUD publik.
+
+12. SALES
+GET    /sales?warehouse_id=1&status=DRAFT
+GET    /sales/:id
+POST   /sales
+PUT    /sales/:id
+DELETE /sales/:id
+POST   /sales/:id/complete
+POST   /sales/:id/cancel
+
+Sales adalah invoice type SALES. COMPLETE membuat atau menautkan OUTBOUND inventory transaction satu kali, menjalankan FIFO, menyimpan HPP pada invoice detail, lalu menandai invoice COMPLETED. Koreksi sale completed memakai dokumen reversal baru yang menyimpan reversal_of_invoice_id dan reason.
+Untuk POS gunakan resource yang sama: GET /items/search dan POST /sales. Hindari endpoint paralel /pos/sales agar lifecycle tidak terduplikasi.
+
+13. PURCHASE
+GET    /purchases?warehouse_id=1&status=DRAFT
+GET    /purchases/:id
+POST   /purchases
+PUT    /purchases/:id
+DELETE /purchases/:id
+POST   /purchases/:id/complete
+POST   /purchases/:id/cancel
+
+Purchase adalah invoice type PURCHASE, bukan purchase order. COMPLETE membuat atau menautkan INBOUND inventory transaction satu kali, sehingga membuat stock mutation IN dan FIFO cost layer. Koreksi purchase completed memakai dokumen reversal baru yang menyimpan reversal_of_invoice_id dan reason.
+
+14. INVOICE & PAYMENT
+GET  /invoices?type=SALES&payment_status=UNPAID&status=COMPLETED
+GET  /invoices/:id
+GET  /invoices/:id/payments
+GET  /payments?invoice_id=1&from=2026-08-01&to=2026-08-31
+GET  /payments/:id
+POST /payments
+
+POST /payments hanya untuk invoice COMPLETED dan amount tidak boleh melebihi sisa tagihan. Backend menghitung payment_status (UNPAID/PARTIAL/PAID); client tidak boleh mengubahnya langsung. Backend juga menghitung subtotal dan total_amount dari invoice detail serta tax policy; nilai total dari request client tidak menjadi nilai final.
+
+15. DASHBOARD / REPORTING
+GET /dashboard/summary?warehouse_id=1&date=2026-08-23
+GET /dashboard/stock?warehouse_id=1
+GET /dashboard/sales?warehouse_id=1&from=2026-08-01&to=2026-08-31
+GET /dashboard/purchases?warehouse_id=1&from=2026-08-01&to=2026-08-31
+GET /dashboard/profit?warehouse_id=1&from=2026-08-01&to=2026-08-31
+
+MVP PRIORITY
+1. Master: warehouses, items, contacts.
+2. Inventory: stocks (read only), inbounds, outbounds, stock mutations, FIFO cost layers/allocations.
+3. Control: stock transfer dan stock opname.
+4. Commerce: sales, purchase, invoice, payment.
+5. Return dan dashboard setelah flow inti stabil.

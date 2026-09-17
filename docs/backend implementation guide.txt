@@ -1,0 +1,280 @@
+BACKEND IMPLEMENTATION GUIDE
+Node.js (JavaScript ESM) + Fastify + MySQL 8 + mysql2
+
+1. TEKNOLOGI YANG DIPAKAI
+
+Runtime
+- Node.js 24 LTS
+- JavaScript dengan ekstensi .js
+- ECMAScript Modules (ESM)
+
+HTTP API
+- Fastify
+- JSON Schema bawaan Fastify untuk validasi request dan response
+- @fastify/swagger + @fastify/swagger-ui untuk OpenAPI documentation
+- @fastify/cors untuk konfigurasi origin frontend
+- @fastify/env untuk memvalidasi environment variable saat aplikasi start
+
+Database
+- MySQL 8
+- mysql2/promise sebagai database driver
+- Knex digunakan hanya untuk menjalankan migration, bukan sebagai ORM atau query layer utama
+- Semua query bisnis inventory memakai mysql2 prepared statement: connection.execute(sql, values)
+
+Testing dan development
+- Vitest untuk unit dan integration test
+- pino-pretty untuk tampilan log lokal
+- node --watch untuk development server
+
+2. PACKAGE YANG DIPERLUKAN
+
+npm i fastify mysql2
+npm i @fastify/cors @fastify/swagger @fastify/swagger-ui @fastify/env
+npm i -D knex vitest pino-pretty
+
+3. KONFIGURASI PACKAGE.JSON
+
+Gunakan ESM secara eksplisit:
+
+{
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "migrate:latest": "knex migrate:latest",
+    "migrate:rollback": "knex migrate:rollback"
+  }
+}
+
+4. ENVIRONMENT VARIABLE
+
+NODE_ENV=development
+HOST=0.0.0.0
+PORT=3000
+
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_NAME=warehouse_db
+DB_USER=warehouse_user
+DB_PASSWORD=change_me
+DB_CONNECTION_LIMIT=10
+
+LOG_LEVEL=debug
+CORS_ORIGIN=http://localhost:5173
+IDEMPOTENCY_TTL_HOURS=24
+
+Jangan commit file .env. Sediakan .env.example tanpa password asli.
+
+5. STRUKTUR PROJECT
+
+src/
+├── app.js
+├── server.js
+├── config/
+│   ├── env.js
+│   └── database.js
+├── plugins/
+│   ├── swagger.js
+│   └── error-handler.js
+├── modules/
+│   ├── warehouses/
+│   ├── items/
+│   ├── contacts/
+│   ├── inventory/
+│   │   ├── inbounds/
+│   │   ├── outbounds/
+│   │   ├── stocks/
+│   │   ├── stock-mutations/
+│   │   └── costing/
+│   ├── stock-transfers/
+│   ├── stock-opnames/
+│   ├── returns/
+│   ├── sales/
+│   ├── purchases/
+│   └── payments/
+└── shared/
+    ├── database/
+    │   └── transaction.js
+    ├── errors/
+    ├── schemas/
+    └── utils/
+
+migrations/
+tests/
+
+Setiap module mengikuti pola:
+route -> service -> repository -> database
+
+Route hanya menangani HTTP dan schema. Service menangani business rule. Repository hanya menjalankan query database.
+Jangan buat CRUD generic untuk transaksi inventory.
+
+6. DATABASE POOL
+
+Gunakan mysql2/promise dan connection pool.
+
+import mysql from 'mysql2/promise';
+
+export const pool = mysql.createPool({
+  host: env.DB_HOST,
+  port: env.DB_PORT,
+  user: env.DB_USER,
+  password: env.DB_PASSWORD,
+  database: env.DB_NAME,
+  waitForConnections: true,
+  connectionLimit: env.DB_CONNECTION_LIMIT,
+  queueLimit: 0,
+  decimalNumbers: false
+});
+
+decimalNumbers wajib false agar nilai DECIMAL tidak berubah menjadi JavaScript floating-point number.
+
+7. TRANSAKSI DATABASE
+
+Semua command yang mengubah stok/HPP harus memakai SATU connection yang sama dari awal sampai commit.
+
+import { pool } from '../../config/database.js';
+
+export async function withTransaction(work) {
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+    const result = await work(connection);
+    await connection.commit();
+    return result;
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+Gunakan prepared statement:
+
+const [rows] = await connection.execute(
+  'SELECT id, quantity FROM stocks WHERE warehouse_id = ? AND item_id = ? FOR UPDATE',
+  [warehouseId, itemId]
+);
+
+Jangan merangkai input user ke SQL string.
+
+8. LOCKING DAN FIFO
+
+Ketika complete inbound/outbound, transfer, return, atau opname:
+
+1. Ambil idempotency request dengan lock atau buat record baru.
+2. Lock header dokumen dan validasi status masih DRAFT/APPROVED sesuai flow.
+3. Lock row stocks dengan SELECT ... FOR UPDATE.
+4. Untuk stock-out, lock FIFO cost layers dengan urutan created_at, id:
+
+SELECT id, quantity_remaining, unit_cost
+FROM inventory_cost_layers
+WHERE warehouse_id = ?
+  AND item_id = ?
+  AND quantity_remaining > 0
+ORDER BY created_at ASC, id ASC
+FOR UPDATE;
+
+5. Buat stock_mutations dan inventory_cost_allocations.
+6. Update stocks serta quantity_remaining layer.
+7. Ubah status header menjadi COMPLETED/APPROVED.
+8. Simpan hasil idempotency request dan commit.
+
+Selalu proses item dengan urutan item_id naik saat satu dokumen memuat banyak item. Ini mengurangi risiko deadlock.
+Jika MySQL menghasilkan ER_LOCK_DEADLOCK atau ER_LOCK_WAIT_TIMEOUT, retry command dengan batas kecil (misalnya maksimal 3 kali) menggunakan Idempotency-Key yang sama.
+
+Saat membaca atau membuat idempotency request, bandingkan endpoint dan request_hash. Jika Idempotency-Key sudah ada tetapi endpoint atau request_hash berbeda, rollback dan kembalikan HTTP 409 IDEMPOTENCY_KEY_REUSED. Hanya request identik yang boleh memakai response tersimpan.
+
+Setelah membuat semua allocation untuk satu mutation OUT, service wajib memvalidasi:
+
+SUM(inventory_cost_allocations.quantity) = stock_mutations.quantity
+
+Jika tidak sama, rollback seluruh transaction. Ini tidak dapat dijamin dengan CHECK constraint SQL biasa karena melibatkan banyak row.
+
+Untuk stok yang belum memiliki row, buat row nol lebih dulu sebelum di-lock agar request paralel tetap aman:
+
+INSERT INTO stocks (warehouse_id, item_id, quantity)
+VALUES (?, ?, 0)
+ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id);
+
+SELECT id, quantity
+FROM stocks
+WHERE warehouse_id = ? AND item_id = ?
+FOR UPDATE;
+
+9. ATURAN BISNIS YANG WAJIB DIIMPLEMENTASIKAN
+
+- stocks adalah read model. Tidak ada endpoint publik POST/PUT/DELETE /stocks.
+- stock_mutations adalah immutable ledger.
+- Dokumen DRAFT boleh diubah atau dibatalkan.
+- Dokumen COMPLETED/APPROVED tidak boleh diedit, dihapus, atau dibatalkan.
+- Koreksi dokumen COMPLETED memakai dokumen reversal manual dengan reversal_of_* dan reversal_reason.
+- Sales/Purchase completed masing-masing hanya boleh membuat atau menautkan satu inventory transaction.
+- Stock tidak boleh negatif.
+- FIFO dipakai untuk semua stock-out.
+- Stock opname selisih positif membuat cost layer baru dengan unit_cost = 0.
+- Customer return DAMAGED wajib SCRAP dan tidak masuk available stock atau cost layer.
+- Customer return GOOD + REPLACE menjalankan dua dampak atomik: barang return masuk stock IN dan cost layer pada biaya historis, lalu satu OUTBOUND replacement tertaut dibuat dengan harga jual 0 dan FIFO/HPP. Jika stok pengganti kurang, seluruh complete ditolak.
+- DAMAGED tidak boleh memakai REPLACE karena wajib SCRAP. Untuk MVP, outbound replacement memakai item dan quantity yang sama dengan item return.
+- Transfer membuat mutation OUT dan IN serta meneruskan unit cost layer; tidak membuat revenue atau COGS.
+
+VALIDASI RETUR
+- RETURN_CUSTOMER harus memiliki original_invoice_id dengan invoice type SALES.
+- RETURN_SUPPLIER harus memiliki original_inventory_transaction_id dengan transaction type INBOUND.
+- Tepat satu referensi dokumen asal boleh terisi.
+- Item return harus ada pada dokumen asal.
+- Quantity return tidak boleh melebihi quantity asal dikurangi quantity retur COMPLETED sebelumnya.
+
+TOTAL INVOICE
+- Client mengirim line item dan input tax yang diizinkan saja.
+- Backend menghitung subtotal dari invoice_details.
+- Backend menghitung total_amount dari subtotal dan tax policy.
+- Client tidak boleh menentukan nilai final subtotal, tax, atau total_amount.
+
+10. KONVERSI SQL POSTGRESQL KE MYSQL
+
+File docs/tables.sql saat ini adalah referensi business schema PostgreSQL dan TIDAK boleh langsung dijalankan ke MySQL.
+Saat membuat migration MySQL, lakukan konversi berikut:
+
+- SERIAL -> INT AUTO_INCREMENT
+- BIGSERIAL -> BIGINT AUTO_INCREMENT
+- TIMESTAMPTZ -> DATETIME(3), seluruh waktu disimpan dalam UTC
+- JSONB -> JSON
+- PostgreSQL placeholder $1, $2 -> MySQL placeholder ? pada query aplikasi
+- PostgreSQL RETURNING tidak digunakan; gunakan result.insertId atau SELECT setelah INSERT bila dibutuhkan
+- Partial index dengan WHERE quantity_remaining > 0 tidak didukung; gunakan composite index (warehouse_id, item_id, quantity_remaining, created_at, id)
+- Pastikan MySQL 8 digunakan agar CHECK constraint, JSON, dan generated stored column tersedia
+- Generated column tetap memakai GENERATED ALWAYS AS (...) STORED dengan sintaks MySQL
+
+Migration pertama harus membuat schema MySQL dari dokumentasi bisnis yang ada. Jangan menjalankan tables.sql PostgreSQL apa adanya.
+
+11. TEST MINIMAL SEBELUM MODUL DINYATAKAN SELESAI
+
+- inbound menambah stock, mutation, dan cost layer satu kali
+- retry Idempotency-Key tidak membuat dampak kedua
+- Idempotency-Key yang sama dengan endpoint atau body berbeda ditolak HTTP 409
+- outbound FIFO mengonsumsi satu dan beberapa layer dengan benar
+- total quantity FIFO allocation harus sama dengan quantity setiap stock mutation OUT
+- outbound gagal jika stock kurang
+- dua request yang bersamaan tidak membuat stock negatif
+- transfer memindahkan stok dan biaya tanpa COGS/revenue
+- opname positif memakai unit cost nol
+- return DAMAGED tidak menambah stock
+- return GOOD + REPLACE menambah stok retur pada biaya historis dan membuat outbound replacement satu kali
+- return GOOD + REPLACE rollback sepenuhnya bila stok replacement tidak cukup; barang retur tidak boleh telanjur masuk stok, cost layer, atau ledger
+- return ditolak bila item tidak ada di dokumen asal atau quantity melebihi sisa eligible quantity
+- subtotal dan total_amount invoice dihitung backend dari detail dan tax policy, bukan dari nilai final client
+- completed document tidak bisa diubah/cancel
+- reversal membuat jejak baru tanpa menghapus ledger awal
+
+12. YANG BELUM DIBUAT SEKARANG
+
+- Authentication dan authorization
+- Redis, BullMQ, queue worker
+- Microservice
+- ORM penuh
+
+Mulai dengan modular monolith. Tambahkan komponen di atas hanya bila kebutuhan nyata sudah muncul.

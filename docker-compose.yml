@@ -1,0 +1,61 @@
+# warehouse-system-api — 2 containers: `db` (MariaDB) + `app` (this API). nginx stays on the
+# VPS host (already installed there, shared with the sibling skinet-auth-api) and reverse-proxies
+# to the `app` container's published port — see deploy/nginx-api-wms.conf. Neither container is
+# reachable from outside the VPS directly.
+#
+# Usage on the VPS:
+#   cp .env.example .env          # then fill in every value for real — see docs/deployment-vps.md
+#   docker compose up -d --build
+#   docker compose exec app npm run migrate:latest   # first boot only (fresh db)
+#   docker compose logs -f app
+
+services:
+  db:
+    image: mariadb:10.11
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: ${DB_NAME}
+      MARIADB_USER: ${DB_USER}
+      MARIADB_PASSWORD: ${DB_PASSWORD}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+    volumes:
+      - db_data:/var/lib/mysql
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    # No `ports:` here on purpose — db is reachable ONLY from the `app` container over the
+    # `internal` network, never from the host or the outside world.
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      # Override the host-oriented dev values from .env — inside the compose network the
+      # DB is reached by service name, not 127.0.0.1.
+      DB_HOST: db
+      DB_PORT: 3306
+    ports:
+      # Bind to loopback only — nginx on the VPS host proxies to this; not reachable from
+      # outside the VPS directly (see deploy/nginx-api-wms.conf).
+      - "127.0.0.1:3000:3000"
+    networks:
+      - internal
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  db_data:

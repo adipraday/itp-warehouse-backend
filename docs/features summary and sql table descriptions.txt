@@ -1,0 +1,156 @@
+WAREHOUSE SYSTEM - DOMAIN SUMMARY
+
+PRINSIP ARSITEKTUR
+1. stocks adalah saldo terkini (read model), bukan sumber transaksi.
+2. stock_mutations adalah ledger immutable. Tidak ada CRUD langsung dari frontend.
+3. Semua perubahan stok, HPP, dan cost layer terjadi hanya saat business document selesai (complete/approve).
+4. inventory_transactions adalah pencatatan pergerakan stok kanonis untuk inbound dan outbound.
+5. invoices adalah dokumen komersial. Invoice SALES/PURCHASE yang completed harus tertaut ke satu inventory_transaction yang sesuai.
+6. Costing menggunakan FIFO. Satu stock-out dapat mengonsumsi beberapa cost layer.
+7. Transfer tidak membentuk revenue atau COGS; nilai persediaan dan jejak layer dipindahkan antar gudang.
+
+DOMAIN MAP
+
+WAREHOUSE
+├── warehouses
+│
+├── MASTER DATA
+│   ├── items
+│   └── contacts
+│
+├── INVENTORY
+│   ├── stocks
+│   ├── idempotency_requests
+│   ├── inventory_transactions
+│   ├── inventory_transaction_details
+│   └── stock_mutations
+│
+├── COSTING / HPP (FIFO)
+│   ├── inventory_cost_layers
+│   └── inventory_cost_allocations
+│
+├── TRANSFER
+│   ├── stock_transfers
+│   └── stock_transfer_details
+│
+├── RETURN
+│   ├── item_returns
+│   └── item_return_details
+│
+├── STOCK CONTROL
+│   ├── stock_opnames
+│   └── stock_opname_details
+│
+└── SALES / PURCHASE
+    ├── invoices
+    ├── invoice_details
+    └── payments
+
+TABLE SUMMARY
+
+1. warehouses
+   Master gudang.
+2. items
+   Master barang, SKU, unit, minimum stock, dan default selling price.
+3. contacts
+   Supplier, customer, atau keduanya.
+4. stocks
+   Saldo stok per kombinasi warehouse dan item. Diubah hanya oleh proses backend yang menyelesaikan transaksi.
+5. idempotency_requests
+   Menyimpan hasil command complete/approve agar retry request dengan Idempotency-Key tidak memposting transaksi kedua.
+6. inventory_transactions
+   Header pergerakan stok INBOUND/OUTBOUND, termasuk transaksi manual dan transaksi yang berasal dari invoice.
+7. inventory_transaction_details
+   Detail barang dan harga pergerakan inventory.
+8. stock_mutations
+   Ledger immutable setiap stok masuk/keluar/adjustment. Satu event tidak boleh diposting dua kali.
+9. inventory_cost_layers
+   Layer FIFO persediaan yang diterima; menyimpan quantity awal, sisa quantity, biaya, dan asal layer.
+10. inventory_cost_allocations
+   Alokasi quantity dari cost layer ke mutation OUT. Wajib dipakai saat satu stock-out memakai lebih dari satu layer FIFO.
+11. item_returns
+   Header retur customer/supplier, termasuk referensi dokumen asal.
+12. item_return_details
+   Detail barang retur, kondisi, aksi, dan biaya historis.
+13. stock_opnames
+   Header stock opname.
+14. stock_opname_details
+   Saldo sistem, hitungan fisik, dan selisih opname.
+15. invoices
+   Header SALES/PURCHASE. Invoice completed ditautkan ke inventory transaction yang membentuk dampak stok.
+16. invoice_details
+   Detail invoice; untuk SALES menyimpan HPP final per baris setelah FIFO dialokasikan.
+17. payments
+   Pembayaran invoice. payment_status dihitung backend dari total pembayaran yang valid.
+18. stock_transfers
+   Header transfer antar gudang.
+19. stock_transfer_details
+   Detail item transfer. Nilai biaya diambil dari FIFO allocations, bukan diinput bebas.
+
+LIFECYCLE DAN ATURAN DATA
+
+- Master data tidak boleh dihapus bila masih direferensikan transaksi; gunakan inactive/archived jika diperlukan.
+- Hanya dokumen DRAFT yang dapat diubah atau dihapus.
+- Dokumen COMPLETED/APPROVED tidak boleh diedit, dihapus, atau di-cancel. Koreksi harus memakai dokumen reversal manual yang mereferensikan dokumen asal dan memiliki alasan.
+- Setiap complete/approve wajib atomic dalam satu database transaction: validasi status dan stok, tulis mutation, update stocks, alokasikan FIFO, lalu ubah status.
+- Proses complete/approve wajib idempoten. Retry request tidak boleh membuat mutation atau cost layer kedua.
+- Semua waktu audit menggunakan TIMESTAMPTZ: created_at, updated_at, completed_at/cancelled_at bila relevan.
+
+DAMPAK BISNIS UTAMA
+
+INBOUND selesai
+  -> stock +
+  -> stock mutation IN
+  -> cost layer FIFO baru
+
+OUTBOUND atau SALES selesai
+  -> validasi stok
+  -> alokasi FIFO ke inventory_cost_allocations
+  -> stock mutation OUT
+  -> stock -
+  -> HPP final tersimpan pada invoice detail bila sumbernya SALES
+
+PURCHASE invoice selesai
+  -> membuat/menautkan inventory transaction INBOUND
+  -> menjalankan flow INBOUND; tidak boleh ada inbound kedua untuk invoice yang sama
+
+CUSTOMER RETURN selesai
+  -> wajib merujuk invoice SALES asal
+  -> GOOD + RESTOCK: stock IN dan cost layer baru memakai biaya historis barang asal
+  -> DAMAGED: langsung SCRAP, tidak masuk available stock maupun cost layer
+  -> GOOD + REPLACE: barang retur tetap masuk stock IN dan cost layer baru memakai biaya historis; sistem juga membuat OUTBOUND replacement tertaut ke retur, bernilai jual 0 tetapi tetap mengurangi stok dan menghitung FIFO/HPP
+  -> DAMAGED tidak dapat REPLACE karena wajib SCRAP
+  -> MVP replacement memakai item dan quantity yang sama dengan item yang diretur; penggantian SKU/quantity berbeda membutuhkan flow replacement terpisah
+  -> item retur wajib ada pada invoice asal; quantity retur tidak boleh melebihi sisa quantity yang masih eligible untuk diretur
+
+SUPPLIER RETURN selesai
+  -> wajib merujuk inbound/purchase asal
+  -> item retur wajib ada pada inbound asal; quantity retur tidak boleh melebihi sisa quantity yang masih eligible untuk diretur
+  -> alokasi FIFO, stock OUT, dan mutation RETURN_OUT
+
+TRANSFER selesai
+  -> alokasi FIFO dari warehouse asal
+  -> mutation OUT di asal dan mutation IN di tujuan
+  -> membuat layer tujuan per allocation dengan unit cost serta origin_cost_layer asal
+  -> tidak membentuk revenue maupun COGS
+
+STOCK OPNAME disetujui
+  -> snapshot system_qty dipakai sebagai bukti
+  -> selisih positif: ADJUSTMENT IN dan layer baru dengan unit_cost = 0
+  -> selisih negatif: ADJUSTMENT OUT melalui alokasi FIFO
+
+KOREKSI DOKUMEN COMPLETED
+  -> tidak ada cancel otomatis dan tidak ada penghapusan ledger
+  -> buat dokumen reversal manual sesuai tipe: inbound/outbound reversal, customer return, transfer balik, atau opname adjustment baru
+  -> dokumen baru menyimpan referensi dokumen asal dan alasan koreksi
+
+VALIDASI RETUR
+  -> RETURN_CUSTOMER hanya memakai original_invoice_id; invoice asal wajib bertipe SALES
+  -> RETURN_SUPPLIER hanya memakai original_inventory_transaction_id; transaksi asal wajib bertipe INBOUND
+  -> tepat satu dokumen asal harus terisi; keduanya tidak boleh terisi bersamaan
+  -> backend menghitung total quantity retur COMPLETED sebelumnya agar quantity eligible tidak terlampaui
+
+INTEGRITAS TRANSAKSI
+  -> total quantity inventory_cost_allocations untuk setiap mutation OUT harus sama dengan quantity stock_mutations
+  -> total invoice (subtotal, tax, total_amount) dihitung backend dari invoice_details dan tax policy; nilai final dari client tidak dipercaya
+  -> Idempotency-Key yang dipakai ulang dengan endpoint atau body berbeda harus ditolak dengan HTTP 409
