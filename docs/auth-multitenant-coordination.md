@@ -330,3 +330,24 @@ bukan Slack/email polos).
   auth-backend produksi langsung dari browser (bukan lewat warehouse-backend), request bakal
   kena CORS block sampai domain-nya ditambahin ke `CLIENT_ORIGIN` — kabarin auth-backend kalau
   ini sudah relevan.
+
+## 11. 🗄️ Backup DB — sistem baru, sudah aktif di VPS untuk KEDUA service (2026-09-20)
+
+Sebelumnya tidak ada backup sama sekali untuk auth-backend maupun warehouse-backend (cuma
+volume Docker `db_data`, yang persisten lintas restart tapi bukan pengganti backup — satu
+`docker compose down -v` yang salah = hilang semua).
+
+Dibuatkan `deploy/backup-db.sh` + `deploy/restore-db.sh` generik (dump `mariadb-dump` harian,
+gzip, retensi 14 hari, restore interaktif dengan konfirmasi ketik nama DB) di warehouse-backend,
+lalu pola yang sama **sudah dipasang dan aktif** di `/opt/skinet-auth-api/deploy/` di VPS (cron
+harian di crontab root, jam 02:20, karena direktori itu dimiliki `root:root`). Detail lengkap:
+`warehouse project 230826/docs/deployment-vps.md` §7.
+
+**Aksi buat siapapun yang pegang repo `itp-backend-auth`:** kedua script di
+`/opt/skinet-auth-api/deploy/backup-db.sh` dan `restore-db.sh` di VPS **belum ada di git repo
+auth-backend** — sudah jalan (cron aktif), tapi kalau server di-rebuild dari git clone bersih,
+script ini akan hilang. Tolong tarik salinannya dari VPS dan commit ke repo kalau sempat, supaya
+tidak cuma hidup sebagai file yatim di server.
+
+Belum diselesaikan (kedua service): copy backup ke storage di luar VPS (off-site) — baru ada
+hook `OFFSITE_UPLOAD_CMD` di script, belum ada storage/kredensial yang dipilih.
