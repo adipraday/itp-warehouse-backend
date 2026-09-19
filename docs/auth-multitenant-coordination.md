@@ -349,5 +349,8 @@ auth-backend** — sudah jalan (cron aktif), tapi kalau server di-rebuild dari g
 script ini akan hilang. Tolong tarik salinannya dari VPS dan commit ke repo kalau sempat, supaya
 tidak cuma hidup sebagai file yatim di server.
 
-Belum diselesaikan (kedua service): copy backup ke storage di luar VPS (off-site) — baru ada
-hook `OFFSITE_UPLOAD_CMD` di script, belum ada storage/kredensial yang dipilih.
+**Update 2026-09-19 — off-site copy juga sudah selesai.** Backup harian kedua service sekarang
+otomatis ter-upload ke Google Drive (via `rclone`, satu akun, folder terpisah per service:
+`itp-backups/warehouse-db/` dan `itp-backups/auth-db/`), jadi tidak lagi cuma tersimpan di disk
+VPS yang sama dengan database live-nya. Detail lengkap + cara reproduksi kalau perlu ganti akun
+Drive: `warehouse project 230826/docs/deployment-vps.md` §7.4.

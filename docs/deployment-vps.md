@@ -169,10 +169,12 @@ RETENTION_DAYS=30 ./deploy/backup-db.sh   # override retensi
 
 Cron (crontab milik `adiprada`, **bukan** root — karena `/opt/warehouse-system-api` sudah
 dimiliki `adiprada` dan dia ada di grup `docker`, jadi tidak perlu sudo untuk `docker compose
-exec`):
+exec`). `OFFSITE_UPLOAD_CMD` di-set inline di crontab-nya sendiri (lihat §7.4) — perhatikan
+value-nya **wajib single-quoted** supaya `$OUT_FILE` di dalamnya tidak ke-expand prematur oleh
+shell parent sebelum `backup-db.sh` sempat men-set variabel itu sendiri:
 
 ```
-15 2 * * * /opt/warehouse-system-api/deploy/backup-db.sh >> /opt/warehouse-system-api/backups/backup.log 2>&1
+15 2 * * * OFFSITE_UPLOAD_CMD='/home/adiprada/bin/rclone --config /home/adiprada/.config/rclone/rclone.conf copy "$OUT_FILE" gdrive:itp-backups/warehouse-db/' /opt/warehouse-system-api/deploy/backup-db.sh >> /opt/warehouse-system-api/backups/backup.log 2>&1
 ```
 
 ### 7.2 `deploy/restore-db.sh`
@@ -201,14 +203,46 @@ Karena `skinet-auth-api` punya git repo sendiri (`adipraday/itp-backend-auth`), 
 ini juga perlu di-commit ke repo itu oleh siapapun yang mengelolanya (dicatat sebagai catatan di
 `docs/auth-multitenant-coordination.md`) — di VPS sendiri sudah aktif jalan terlepas dari itu.
 
-### 7.4 Gap yang masih terbuka: off-site copy
+Cron root-nya (dengan off-site upload, sama pola quoting-nya seperti §7.1):
 
-Backup di atas **masih tersimpan di disk VPS yang sama** dengan database live-nya — tidak
-melindungi dari kegagalan disk/VPS itu sendiri. `backup-db.sh` sudah punya hook
-`OFFSITE_UPLOAD_CMD` (env var opsional, dieksekusi setelah dump berhasil) untuk menyalin ke
-storage eksternal (mis. `rclone copy ... remote:bucket/` ke S3/R2/B2), tapi **belum ada akun/
-kredensial storage yang dipilih** — ini keputusan terbuka, bukan sesuatu yang sudah diblokir
-teknis.
+```
+20 2 * * * OFFSITE_UPLOAD_CMD='/home/adiprada/bin/rclone --config /home/adiprada/.config/rclone/rclone.conf copy "$OUT_FILE" gdrive:itp-backups/auth-db/' /opt/skinet-auth-api/deploy/backup-db.sh >> /opt/skinet-auth-api/backups/backup.log 2>&1
+```
+
+Root's cron bisa baca `/home/adiprada/.config/rclone/rclone.conf` walau file itu milik
+`adiprada` (bukan root) — root selalu bypass permission bit file lokal, jadi tidak perlu
+duplikat config rclone terpisah untuk user root.
+
+### 7.4 Off-site copy — ✅ SELESAI (2026-09-19), Google Drive via `rclone`
+
+Backup harian kedua service sekarang **juga** ter-upload otomatis ke Google Drive, di luar disk
+VPS, lewat hook `OFFSITE_UPLOAD_CMD` (env var opsional di `backup-db.sh`, dieksekusi setelah
+dump lokal berhasil dan sebelum rotasi).
+
+Setup yang sudah dilakukan:
+- Binary `rclone` (v1.75.1) di-install user-space ke `/home/adiprada/bin/rclone` (tanpa sudo,
+  binary resmi dari `downloads.rclone.org`, tidak perlu di-install ulang untuk service lain).
+- OAuth client Google sendiri dibuat lewat Google Cloud Console (project `itp-backups`) —
+  perlu ini karena rclone's **shared client_id sedang di-retire tahun 2026**
+  (lihat `rclone config` warning + https://rclone.org/drive/#making-your-own-client-id). App
+  masih status "Testing" di OAuth consent screen — cukup untuk 1 akun (`systact.teamlangit@gmail.com`
+  terdaftar sebagai test user), tidak perlu proses verifikasi publik Google karena tidak dipakai
+  publik.
+- Otorisasi (`rclone config` → remote `gdrive`, tipe `drive`, scope full access) dilakukan
+  **sepenuhnya di laptop Windows user**, bukan di VPS — browser buka otomatis untuk login &
+  consent Google, tidak perlu SSH port-forwarding.
+- File hasil `rclone.conf` (berisi OAuth token — setara kredensial, diperlakukan seperti
+  `SERVICE_API_KEY`, **tidak pernah dikirim lewat chat**) di-`scp` langsung oleh user dari
+  laptopnya sendiri ke `/home/adiprada/.config/rclone/rclone.conf` di VPS.
+- Kedua backup script (warehouse & auth) mereferensikan config yang **sama** ini lewat
+  `--config /home/adiprada/.config/rclone/rclone.conf` di `OFFSITE_UPLOAD_CMD` masing-masing
+  (lihat §7.1 dan di atas) — satu akun Drive, dua folder tujuan berbeda
+  (`itp-backups/warehouse-db/` dan `itp-backups/auth-db/`).
+- Diverifikasi live: kedua backup benar-benar muncul di `rclone ls gdrive:itp-backups/` dengan
+  ukuran & timestamp yang cocok dengan file lokalnya.
+
+Kuota Google Drive akun ini: 15GB gratis — dump saat ini masih puluhan KB, jadi jauh dari
+mendekati limit; perlu dipantau ulang kalau volume data produksi sudah besar.
 
 ---
 
