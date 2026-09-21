@@ -45,10 +45,47 @@ describe('HPP_VISIBLE_ROLES', () => {
     expect(HPP_VISIBLE_ROLES).not.toContain('kasir-sales');
   });
 
-  it('includes super-admin, owner, admin-bu, purchasing and finance', () => {
+  it('includes super-admin, owner, admin-bu, admin-warehouse, purchasing and finance', () => {
     expect(HPP_VISIBLE_ROLES.sort()).toEqual(
-      ['admin-bu', 'finance', 'owner', 'purchasing', 'super-admin'].sort()
+      ['admin-bu', 'admin-warehouse', 'finance', 'owner', 'purchasing', 'super-admin'].sort()
     );
+  });
+});
+
+// admin-warehouse (2026-09-21, docs/user-warehouse-assignments.md): full
+// operational access confined to one warehouse via STAFF_ROLES — write on
+// everything a branch runs day-to-day, but never approve/reject, same
+// segregation-of-duty reasoning as staff-gudang.
+describe('admin-warehouse role (full write, no approve)', () => {
+  it('is declared in ROLES and can see HPP/profit data', () => {
+    expect(ROLES).toContain('admin-warehouse');
+    expect(HPP_VISIBLE_ROLES).toContain('admin-warehouse');
+  });
+
+  it('can write every day-to-day operational resource', () => {
+    const resources = [
+      'items', 'contacts', 'inbounds', 'outbounds', 'stock-transfers',
+      'stock-opnames', 'returns', 'sales', 'cash-sessions', 'purchases', 'payments'
+    ];
+    for (const resource of resources) {
+      expect(can('admin-warehouse', resource, 'write')).toBe(true);
+    }
+  });
+
+  it('is denied approve/submit-gated sub-actions reserved for admin-bu', () => {
+    expect(can('admin-warehouse', 'stock-transfers', 'approve')).toBe(false);
+    expect(can('admin-warehouse', 'stock-opnames', 'approve')).toBe(false);
+    expect(can('admin-warehouse', 'returns', 'approve')).toBe(false);
+    expect(can('admin-warehouse', 'returns', 'reject')).toBe(false);
+  });
+
+  it('can still submit its own stock-opname (only approve is admin-bu-only)', () => {
+    expect(can('admin-warehouse', 'stock-opnames', 'submit')).toBe(true);
+  });
+
+  it('is denied the two BU-structural resources', () => {
+    expect(can('admin-warehouse', 'warehouses', 'write')).toBe(false);
+    expect(can('admin-warehouse', 'user-warehouse-assignments', 'write')).toBe(false);
   });
 });
 

@@ -354,3 +354,32 @@ otomatis ter-upload ke Google Drive (via `rclone`, satu akun, folder terpisah pe
 `itp-backups/warehouse-db/` dan `itp-backups/auth-db/`), jadi tidak lagi cuma tersimpan di disk
 VPS yang sama dengan database live-nya. Detail lengkap + cara reproduksi kalau perlu ganti akun
 Drive: `warehouse project 230826/docs/deployment-vps.md` §7.4.
+
+## 12. 🆕 Role baru `admin-warehouse` — BUTUH AKSI di auth-backend (2026-09-21)
+
+warehouse-backend baru nambah role `admin-warehouse` di `role-matrix.js` +
+`STAFF_ROLES` (`warehouse-assignment.js`) — "kepala cabang": akses penuh
+(write) ke semua fitur operasional (items, contacts, inbound/outbound,
+transfer, opname, return, sales, cash-session, purchase, payment) tapi
+di-scope ke **satu warehouse** lewat mekanisme `user_warehouse_assignments`
+yang sudah ada (sama seperti `staff-gudang`/`kasir-sales`/`purchasing`/
+`finance`), bukan seluas `admin-bu` yang BU-wide. Sengaja TIDAK dikasih
+`approve`/`reject` (tetap `admin-bu`-only, segregation of duty) dan TIDAK
+bisa nulis `warehouses`/`user-warehouse-assignments` (itu keputusan
+struktural BU). Detail lengkap: `warehouse project 230826/docs/user-warehouse-assignments.md`.
+
+**Yang perlu dikerjakan di sisi auth-backend, ini belum jalan tanpa itu:**
+- Kolom `role` (`docs/auth-backend-requirements.md` §users, saat ini
+  `VARCHAR(20)` dengan validasi manual ke 6 enum yang sah) perlu nerima
+  `admin-warehouse` sebagai nilai valid saat provisioning user baru.
+- Kalau ada aturan hierarki provisioning (mis. "`admin-bu` cuma boleh bikin
+  role di bawahnya"), `admin-warehouse` masuk di level yang sama dengan
+  `staff-gudang`/`kasir-sales`/`purchasing`/`finance` — dibuat oleh
+  `admin-bu`, bukan bikin sendiri, dan `warehouse_id` di provisioning-nya
+  wajib diisi (sama seperti 4 role staff lainnya).
+- Tidak ada perubahan kontrak token/JWT — `role` cuma nilai string baru
+  di claim yang sudah ada, tidak perlu klaim baru.
+
+Sampai auth-backend nerima nilai ini, warehouse-backend nggak bisa nge-issue
+token dengan role ini — jadi role-nya sudah ada di kode tapi belum bisa
+dipakai user manapun sampai sisi auth-backend di-update & di-deploy.

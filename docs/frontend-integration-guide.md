@@ -1072,6 +1072,34 @@ warehouse yang boleh diakses user).
 
 ---
 
+## 28. Role baru: `admin-warehouse` — "kepala cabang" (2026-09-21)
+
+Role ke-7. Bedanya sama role yang sudah ada:
+
+- **vs `admin-bu`**: sama-sama akses penuh (write) ke semua fitur operasional, tapi `admin-bu`
+  scope-nya seluruh BU (semua warehouse), `admin-warehouse` di-scope ke **satu warehouse** lewat
+  mekanisme assignment yang sama kayak §17 di atas — jadi kalau bikin form "tambah user" dengan
+  role ini, alur assign-warehouse-nya **wajib** dijalankan setelahnya, sama seperti
+  `staff-gudang`/`kasir-sales`/`purchasing`/`finance`. Tanpa assignment, semua request user ini
+  bakal `403 WAREHOUSE_ACCESS_NOT_CONFIGURED` (lihat §17 poin 1).
+- **vs `staff-gudang`/`kasir-sales`/`purchasing`/`finance`**: role-role itu masing-masing sempit
+  (cuma sebagian fitur). `admin-warehouse` bisa semua fitur operasional dalam satu warehouse itu
+  — items, contacts, inbound/outbound, transfer, opname, return, sales, cash-session, purchase,
+  payment — **dan** bisa lihat data HPP/margin (`dashboard/profit`, `cost-summary`) buat
+  warehouse-nya, yang mana staff-gudang/kasir-sales tidak bisa.
+- **Yang tetap TIDAK bisa** (sama seperti role staff lain, ini bukan bug): approve/reject
+  stock-transfer, stock-opname, return — tetap cuma `admin-bu`. Kalau UI menampilkan tombol
+  "Approve" berdasarkan role, jangan munculkan buat `admin-warehouse` walau dia yang bikin
+  pengajuannya. Juga tidak bisa bikin/edit warehouse baru atau assign staff (dua-duanya tetap
+  menu khusus `admin-bu`).
+
+⚠️ **Belum bisa dipakai user manapun sampai auth-backend juga menerima role ini** saat
+provisioning (lihat `docs/auth-multitenant-coordination.md` §12) — kalau frontend nyoba bikin
+user dengan role ini sebelum itu selesai, auth-backend kemungkinan bakal nolak dengan error
+validasi role tidak dikenal.
+
+---
+
 ## Dokumen terkait
 
 - [`api-documentation.md`](./api-documentation.md) — referensi lengkap tiap endpoint resource

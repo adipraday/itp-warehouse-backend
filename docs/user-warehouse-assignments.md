@@ -26,8 +26,8 @@ token-contract changes at all**.
    users live in the auth service, same convention as `created_by`
    everywhere else in this codebase), `warehouse_id` (real FK, `ON DELETE
    CASCADE`), `assigned_by`, `created_at`, unique on `(user_id, warehouse_id)`.
-2. **Hard block for unassigned staff.** A `staff-gudang` / `kasir-sales` /
-   `purchasing` / `finance` user with **zero** assignments is blocked on
+2. **Hard block for unassigned staff.** A `admin-warehouse` / `staff-gudang` /
+   `kasir-sales` / `purchasing` / `finance` user with **zero** assignments is blocked on
    **every** `/api/*` route except `GET /api/me/access-status` — not just
    writes. There's nothing meaningful for them to read either.
 3. **Who manages assignments.** `admin-bu` (their own BU's warehouses only)
@@ -75,6 +75,32 @@ Assigning them to one warehouse would contradict what those roles are for.
   request against `assignedWarehouseIds`, independently of the `bu_ids`
   check — so a staff user can't create an inbound at a same-BU warehouse
   they aren't assigned to, even by passing its id directly.
+
+## `admin-warehouse` role (2026-09-21)
+
+A 5th `STAFF_ROLES` member, added when it became clear a BU wanted a
+"full-access branch head" role — someone who can run one warehouse
+end-to-end (items, contacts, inbound/outbound, transfers, opnames, returns,
+sales, cash sessions, purchases, payments) without being `admin-bu` (which is
+BU-wide, i.e. every warehouse in the BU, not one).
+
+It goes through the exact same assignment mechanism as the other 4 roles —
+no new table, no new enforcement path — so everything on this page (hard
+block on zero assignments, `assignedWarehouseIds` filtering, the "not
+restricted" carve-out below) applies to it unchanged.
+
+The one deliberate limit: `admin-warehouse` gets `write`/`submit` on every
+resource above but **never `approve`/`reject`** (`role-matrix.js`) — those
+stay `admin-bu`-only, so the person who creates a stock-opname/transfer/return
+can never also be the one who approves it, even for their own warehouse. It
+also can't write `warehouses` or `user-warehouse-assignments` — those are
+BU-structural decisions, not warehouse-operational ones.
+
+**Cross-service note:** `role` is a validated enum on the auth-backend side
+(`docs/auth-backend-requirements.md`), not something warehouse-backend
+controls. Adding this role here does nothing until auth-backend also accepts
+`admin-warehouse` as a valid `role` at provisioning time — see
+`docs/auth-multitenant-coordination.md` for the coordination note.
 
 ## What's intentionally NOT restricted
 

@@ -18,6 +18,7 @@ export const ROLES = [
   'super-admin',  // platform admin (auth backend) — full access here too
   'owner',        // multi-tenant (2026-09-08): view-only across every BU in one company
   'admin-bu',     // top of one business unit (can also hold grants to other BUs — see bu_ids)
+  'admin-warehouse', // full operational access, but confined to one warehouse (2026-09-21) — see STAFF_ROLES
   'staff-gudang',
   'kasir-sales',
   'purchasing',
@@ -25,7 +26,13 @@ export const ROLES = [
 ];
 
 // super-admin is allowed everywhere (short-circuited in can()).
-const ALL_STAFF = ['admin-bu', 'staff-gudang'];
+// admin-warehouse (2026-09-21) included deliberately: it gets write+submit on
+// every ALL_STAFF resource but — since approve/reject below are separate keys
+// that only ever list 'admin-bu' — never approve/reject, even on its own
+// warehouse's stock-opname/transfer/return. That's the point: a warehouse
+// admin can create the paperwork but can't also be the independent check on
+// it (segregation of duty), same reasoning as staff-gudang today.
+const ALL_STAFF = ['admin-bu', 'admin-warehouse', 'staff-gudang'];
 
 // Narrow, deliberate exception to "reads stay open to every authenticated
 // role": HPP/cost data (unit_cost, COGS, gross margin) is hidden from
@@ -34,7 +41,9 @@ const ALL_STAFF = ['admin-bu', 'staff-gudang'];
 // see docs/auth-integration-guide.md §5. Decided 2026-08-28.
 // `owner` added 2026-09-08 (K3, docs/auth-multitenant-coordination.md §6) —
 // an owner is company-level, cross-BU margin visibility is the point of the role.
-export const HPP_VISIBLE_ROLES = ['super-admin', 'owner', 'admin-bu', 'purchasing', 'finance'];
+// `admin-warehouse` added 2026-09-21 — runs a single warehouse end-to-end,
+// margin visibility for their own branch is the point of the role.
+export const HPP_VISIBLE_ROLES = ['super-admin', 'owner', 'admin-bu', 'admin-warehouse', 'purchasing', 'finance'];
 
 // `owner` deliberately never appears anywhere below — that's what makes it
 // view-only. can() has no short-circuit for it (unlike super-admin), so every
@@ -48,8 +57,8 @@ const MATRIX = {
   // own BU's assignments (enforced by buScope()/assertRowInScope() in the
   // routes, not here); super-admin bypasses via the can() short-circuit above.
   'user-warehouse-assignments': { write: ['admin-bu'] },
-  items: { write: ['admin-bu', 'purchasing'] },
-  contacts: { write: ['admin-bu', 'kasir-sales', 'purchasing'] },
+  items: { write: ['admin-bu', 'admin-warehouse', 'purchasing'] },
+  contacts: { write: ['admin-bu', 'admin-warehouse', 'kasir-sales', 'purchasing'] },
 
   inbounds: { write: [...ALL_STAFF, 'purchasing'] },
   outbounds: { write: [...ALL_STAFF, 'kasir-sales'] },
@@ -58,15 +67,15 @@ const MATRIX = {
   'stock-opnames': { write: ALL_STAFF, submit: ALL_STAFF, approve: ['admin-bu'] },
   returns: { write: [...ALL_STAFF, 'kasir-sales'], approve: ['admin-bu'], reject: ['admin-bu'] },
 
-  sales: { write: ['admin-bu', 'kasir-sales'] },
+  sales: { write: ['admin-bu', 'admin-warehouse', 'kasir-sales'] },
   // Cash session / shift (2026-09-13) — whoever runs the register opens/closes it.
-  'cash-sessions': { write: ['admin-bu', 'kasir-sales'] },
-  purchases: { write: ['admin-bu', 'purchasing'] },
+  'cash-sessions': { write: ['admin-bu', 'admin-warehouse', 'kasir-sales'] },
+  purchases: { write: ['admin-bu', 'admin-warehouse', 'purchasing'] },
   // kasir-sales added 2026-09-13 — needed for the cash-session feature to be
   // usable at an actual register: a cashier who can create/complete a sale
   // but couldn't also record its payment made the register workflow require
   // admin-bu/finance intervention on every single transaction.
-  payments: { write: ['admin-bu', 'finance', 'kasir-sales'] },
+  payments: { write: ['admin-bu', 'admin-warehouse', 'finance', 'kasir-sales'] },
 
   // Read-only resources (no mutations exist). Listed for documentation.
   stocks: {},

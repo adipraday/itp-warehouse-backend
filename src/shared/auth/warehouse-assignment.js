@@ -3,10 +3,11 @@
 // WHY THIS EXISTS: bu_ids (docs/auth-multitenant-coordination.md §7) scopes a
 // caller to a set of BUSINESS UNITS, not individual warehouses. That's not
 // enough for a BU that runs more than one warehouse (e.g. "Pusat" + "Cabang")
-// and wants staff-gudang/kasir-sales/purchasing/finance confined to only the
-// warehouse they actually work at — the auth-backend token has no warehouse-
-// level claim, and adding one there would mean every warehouse move requires a
-// re-login/re-issue across a service that doesn't own warehouses. So this
+// and wants admin-warehouse/staff-gudang/kasir-sales/purchasing/finance
+// confined to only the warehouse they actually work at — the auth-backend
+// token has no warehouse-level claim, and adding one there would mean every
+// warehouse move requires a re-login/re-issue across a service that doesn't
+// own warehouses. So this
 // lives entirely in warehouse-backend's own database instead: a
 // user_warehouse_assignments table (see the 202609090002 migration), owned and
 // enforced here, with no auth-backend/token changes at all.
@@ -32,7 +33,7 @@
 // admin-bu/owner/super-admin never get assignedWarehouseIds set (stays
 // undefined) — every call site treats "not present" the same as "not
 // restricted", identically to how buIds === null means unrestricted.
-export const STAFF_ROLES = ['staff-gudang', 'kasir-sales', 'purchasing', 'finance'];
+export const STAFF_ROLES = ['admin-warehouse', 'staff-gudang', 'kasir-sales', 'purchasing', 'finance'];
 
 // The one endpoint an unassigned staff user must still be able to reach, so
 // the frontend can detect WAREHOUSE_ACCESS_NOT_CONFIGURED and redirect —
