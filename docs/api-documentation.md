@@ -877,7 +877,8 @@ Semua read-only, agregasi. `warehouse_id` di semua endpoint ini **opsional** —
 |---|---|---|
 | GET | `/api/dashboard/summary?warehouse_id=1&date=2026-08-23` | Gabungan stock + sales + purchases untuk 1 tanggal. `date` opsional (default hari ini) |
 | GET | `/api/dashboard/stock?warehouse_id=1` | Ringkasan stok (item, quantity, nilai persediaan, low/out-of-stock) |
-| GET | `/api/dashboard/sales?warehouse_id=1&from=2026-08-01&to=2026-08-31` | Total penjualan COMPLETED dalam rentang tanggal |
+| GET | `/api/dashboard/sales?warehouse_id=1&from=2026-08-01&to=2026-08-31` | Total penjualan COMPLETED dalam rentang tanggal (1 angka agregat) |
+| GET | `/api/dashboard/sales-trend?warehouse_id=1&from=2026-08-01&to=2026-08-31` | Sama seperti `/sales`, tapi di-breakdown per hari (buat grafik tren) |
 | GET | `/api/dashboard/purchases?warehouse_id=1&from=...&to=...` | Total pembelian COMPLETED dalam rentang tanggal |
 | GET | `/api/dashboard/profit?warehouse_id=1&from=...&to=...` | Gross profit dari sales COMPLETED (revenue − HPP beku) |
 
@@ -894,6 +895,8 @@ Semua read-only, agregasi. `warehouse_id` di semua endpoint ini **opsional** —
 **Object `/stock`:** `total_items, total_quantity, total_value, low_stock_count, out_of_stock_count`
 
 **Object `/sales` & `/purchases`:** `count, subtotal, tax, total_amount`
+
+**Array `/sales-trend`:** satu baris per tanggal yang ada transaksinya (tanggal tanpa transaksi tidak muncul, bukan diisi nol) — `[{ date, count, subtotal, tax, total_amount }, ...]`, urut `date ASC`. Jumlah semua baris = angka yang sama persis dengan `/sales` untuk rentang tanggal yang sama.
 
 **Object `/profit`:**
 ```json

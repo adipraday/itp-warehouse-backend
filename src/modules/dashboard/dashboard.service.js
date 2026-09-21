@@ -34,6 +34,17 @@ export async function getSalesDashboard(db, query, buIds = null, assignedWarehou
   return { data };
 }
 
+export async function getSalesTrend(db, query, buIds = null, assignedWarehouseIds = null) {
+  const data = await repository.salesTrend(db, {
+    warehouseId: query.warehouse_id ?? null,
+    from: query.from ?? null,
+    to: query.to ?? null,
+    buIds,
+    assignedWarehouseIds
+  });
+  return { data };
+}
+
 export async function getPurchasesDashboard(db, query, buIds = null, assignedWarehouseIds = null) {
   const data = await repository.invoiceSummary(db, {
     type: 'PURCHASE',

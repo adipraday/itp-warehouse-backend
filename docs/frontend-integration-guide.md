@@ -1038,6 +1038,40 @@ async function downloadItemsExport(format = 'csv', warehouseId = null) {
 
 ---
 
+## 27. Sales trend — breakdown penjualan per hari (2026-09-21)
+
+`GET /api/dashboard/sales` cuma balikin **1 angka agregat** buat seluruh rentang tanggal yang
+diminta — nggak bisa dipakai gambar grafik tren (naik/turun per hari). Endpoint baru ini kasih
+data yang sama tapi di-*breakdown* per tanggal, khusus buat kebutuhan itu:
+
+```
+GET /api/dashboard/sales-trend?from=2026-09-01&to=2026-09-20
+GET /api/dashboard/sales-trend?warehouse_id=1&from=2026-09-01&to=2026-09-20
+```
+
+Response — array, satu baris per tanggal, urut `date` ASC:
+```json
+{
+  "data": [
+    { "date": "2026-09-06", "count": 1, "subtotal": "400000.00", "tax": "44000.00", "total_amount": "444000.00" },
+    { "date": "2026-09-13", "count": 7, "subtotal": "1500000.00", "tax": "27000.00", "total_amount": "1497000.00" },
+    { "date": "2026-09-14", "count": 2, "subtotal": "31000.00", "tax": "1705.00", "total_amount": "32705.00" }
+  ]
+}
+```
+
+**Penting:** tanggal yang **tidak ada transaksinya nggak muncul di array** — bukan diisi baris
+dengan angka 0. Kalau mau gambar grafik dengan sumbu-X tanggal yang kontinu (tiap hari dalam
+rentang tampil, termasuk yang kosong), frontend perlu isi celahnya sendiri (misal `from`..`to`
+di-generate dulu sebagai array lengkap, baru di-merge dengan hasil response ini, sisanya default
+`0`).
+
+Sama seperti `/sales`, `/purchases`, `/profit` — cuma hitung invoice `type = 'SALES'` dan
+`status = 'COMPLETED'`, dan `warehouse_id` opsional (kosongin buat agregasi lintas semua
+warehouse yang boleh diakses user).
+
+---
+
 ## Dokumen terkait
 
 - [`api-documentation.md`](./api-documentation.md) — referensi lengkap tiap endpoint resource

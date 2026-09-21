@@ -6,6 +6,7 @@ import {
   dashboardSummarySchema,
   dashboardStockSchema,
   dashboardSalesSchema,
+  dashboardSalesTrendSchema,
   dashboardPurchasesSchema,
   dashboardProfitSchema
 } from './dashboard.schema.js';
@@ -35,6 +36,10 @@ export async function dashboardRoutes(app) {
       request.userContext?.buIds,
       request.userContext?.assignedWarehouseIds
     );
+  });
+
+  app.get('/sales-trend', { preValidation: scope, schema: dashboardSalesTrendSchema }, async (request) => {
+    return service.getSalesTrend(app.db, request.query, request.userContext?.buIds, request.userContext?.assignedWarehouseIds);
   });
 
   app.get('/purchases', { preValidation: scope, schema: dashboardPurchasesSchema }, async (request) => {

@@ -109,6 +109,43 @@ export async function invoiceSummary(db, { type, warehouseId, from, to, buIds, a
   };
 }
 
+export async function salesTrend(db, { warehouseId, from, to, buIds, assignedWarehouseIds }) {
+  const conditions = ["type = 'SALES'", "status = 'COMPLETED'"];
+  const params = [];
+  if (warehouseId) {
+    conditions.push('warehouse_id = ?');
+    params.push(warehouseId);
+  }
+  const bu = buIdsCondition('warehouse_id', buIds);
+  if (bu) {
+    conditions.push(bu.clause);
+    params.push(...bu.params);
+  }
+  const wh = assignedWarehouseCondition('warehouse_id', assignedWarehouseIds);
+  if (wh) {
+    conditions.push(wh.clause);
+    params.push(...wh.params);
+  }
+  const dateRange = dateRangeConditions('invoice_date', { from, to });
+  conditions.push(...dateRange.conditions);
+  params.push(...dateRange.params);
+
+  const [rows] = await db.execute(
+    `SELECT invoice_date AS date, COUNT(*) AS count, COALESCE(SUM(subtotal), 0) AS subtotal,
+            COALESCE(SUM(tax), 0) AS tax, COALESCE(SUM(total_amount), 0) AS total_amount
+     FROM invoices WHERE ${conditions.join(' AND ')}
+     GROUP BY invoice_date ORDER BY invoice_date ASC`,
+    params
+  );
+  return rows.map((row) => ({
+    date: row.date,
+    count: Number(row.count ?? 0),
+    subtotal: Number(row.subtotal ?? 0).toFixed(2),
+    tax: Number(row.tax ?? 0).toFixed(2),
+    total_amount: Number(row.total_amount ?? 0).toFixed(2)
+  }));
+}
+
 export async function profitSummary(db, { warehouseId, from, to, buIds, assignedWarehouseIds }) {
   const conditions = ["i.type = 'SALES'", "i.status = 'COMPLETED'"];
   const params = [];

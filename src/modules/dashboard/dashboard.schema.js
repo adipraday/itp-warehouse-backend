@@ -70,6 +70,19 @@ export const dashboardSalesSchema = {
   }
 };
 
+export const dashboardSalesTrendSchema = {
+  tags: ['dashboard'],
+  querystring: dateRangeQuerystring,
+  response: {
+    200: {
+      type: 'object',
+      properties: {
+        data: { type: 'array', items: { type: 'object', properties: { date: { type: 'string' }, ...invoiceSummaryProperties } } }
+      }
+    }
+  }
+};
+
 export const dashboardPurchasesSchema = {
   tags: ['dashboard'],
   querystring: dateRangeQuerystring,
