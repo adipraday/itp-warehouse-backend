@@ -2,3 +2,7 @@ node_modules/
 .env
 coverage/
 tmp/
+
+# Claude Code local dev-launch config — machine/session-specific (hardcoded local path), bukan
+# bagian source project.
+.claude/

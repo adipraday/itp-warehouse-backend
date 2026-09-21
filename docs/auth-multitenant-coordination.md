@@ -4,9 +4,10 @@
 `project using codex/docs/multi_tenant_architecture.md`. Ini merangkum **hanya bagian yang
 menyentuh warehouse-service** + keputusan yang butuh persetujuan kalian.
 
-Status auth-backend (2026-09-13): **LIVE di produksi** — `https://auth.itpintar.co.id`, semua
-langkah §1-§9 di bawah kelar & terverifikasi. **§10 = aksi yang perlu kalian lakukan sekarang**
-buat cutover produksi bareng — baca itu duluan kalau baru buka doc ini.
+Status auth-backend (2026-09-21): **LIVE di produksi** — `https://auth.itpintar.co.id`. §1-§11
+kelar (cutover produksi, backup DB+off-site). **§12 = update terbaru** (role `admin-warehouse`
+diterima auth-backend, kode di git — cek §12 buat status deploy-ke-VPS-nya sebelum mulai
+provisioning user pakai role itu).
 
 ---
 
@@ -355,7 +356,7 @@ otomatis ter-upload ke Google Drive (via `rclone`, satu akun, folder terpisah pe
 VPS yang sama dengan database live-nya. Detail lengkap + cara reproduksi kalau perlu ganti akun
 Drive: `warehouse project 230826/docs/deployment-vps.md` §7.4.
 
-## 12. 🆕 Role baru `admin-warehouse` — BUTUH AKSI di auth-backend (2026-09-21)
+## 12. ✅ Role baru `admin-warehouse` — SELESAI di auth-backend (2026-09-21)
 
 warehouse-backend baru nambah role `admin-warehouse` di `role-matrix.js` +
 `STAFF_ROLES` (`warehouse-assignment.js`) — "kepala cabang": akses penuh
@@ -383,3 +384,21 @@ struktural BU). Detail lengkap: `warehouse project 230826/docs/user-warehouse-as
 Sampai auth-backend nerima nilai ini, warehouse-backend nggak bisa nge-issue
 token dengan role ini — jadi role-nya sudah ada di kode tapi belum bisa
 dipakai user manapun sampai sisi auth-backend di-update & di-deploy.
+
+### Update — kelar & live di produksi (2026-09-21)
+
+- `src/config/env.js`: `admin-warehouse` ditambahin ke `WAREHOUSE_ROLES` (jadi role valid saat
+  provisioning + muncul di `GET /roles`) dan `ADMIN_BU_ASSIGNABLE_ROLES` (dibuat oleh `admin-bu`,
+  bukan provisioner sendiri — persis sesuai yang diminta). Semua endpoint lain
+  (`user.controller.js`, `role.controller.js`, validator di `user.routes.js`) udah nurut ke dua
+  konstanta itu, jadi nggak ada perubahan kode lain yang dibutuhin.
+- Migration `008_add_admin_warehouse_role.sql` — baris baru di tabel `roles`.
+- **Diverifikasi live** (bukan cuma lolos test): `admin-bu` bikin user `admin-warehouse` →
+  otomatis ke-scope ke `bu_id` `admin-bu` itu sendiri → login → token `role: "admin-warehouse"`,
+  `bu_id`/`bu_ids` sama persis polanya kayak `staff-gudang` dkk, `aud`/`iss` nggak berubah → user
+  itu coba bikin user lain → `403` (bukan provisioner, sesuai desain). `GET /roles` buat
+  `super-admin` maupun `admin-bu` nampilin `admin-warehouse` dengan `scope_level: "bu"`.
+- **Sudah di-deploy & terverifikasi live di produksi (2026-09-21).** Migration `008` dijalankan
+  di DB VPS, container `app` di-rebuild (`docker compose up -d --build app`). Dikonfirmasi:
+  `GET https://auth.itpintar.co.id/roles` (token super-admin) sekarang menampilkan
+  `admin-warehouse` di daftar. Silakan mulai provisioning user dengan role ini kapan pun.
