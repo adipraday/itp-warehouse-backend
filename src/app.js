@@ -40,8 +40,19 @@ export async function buildApp({ logger = true } = {}) {
   // spec CORS) begitu CORS_ORIGIN diisi lebih dari 1 domain. Ditemukan & di-fix live di VPS
   // (2026-09-16) pas nambah domain frontend kedua — di-propagate ke sini biar nggak ke-overwrite
   // deploy berikutnya.
+  //
+  // `methods` WAJIB di-set eksplisit — default @fastify/cors (`node_modules/@fastify/cors/
+  // index.js`) itu literal `'GET,HEAD,POST'`, TIDAK termasuk PUT/PATCH/DELETE. Tanpa baris ini,
+  // browser nolak SEMUA request PUT/DELETE (edit/hapus apa pun — sales, purchase, item, contact,
+  // warehouse, dst) di preflight sebelum sempat nyampe ke handler-nya sama sekali (`Method PUT/
+  // DELETE is not allowed by Access-Control-Allow-Methods in preflight response`). Ditemukan live
+  // di produksi (2026-09-22) lewat laporan user: edit Purchase gagal total dengan "Failed to
+  // fetch" — dikonfirmasi CORS preflight (`curl -X OPTIONS`) balikin `access-control-allow-
+  // methods: GET,HEAD,POST` persis sama kayak default package-nya, bukan masalah nginx (nginx di
+  // VPS cuma passthrough proxy polos, tidak nyentuh header CORS sama sekali).
   await app.register(cors, {
     origin: app.config.CORS_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean),
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
   });
   // 10MB cap — a bulk item/stock import spreadsheet, not arbitrary file storage.
   await app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024 } });
