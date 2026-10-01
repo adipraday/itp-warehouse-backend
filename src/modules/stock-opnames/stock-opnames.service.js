@@ -10,7 +10,8 @@ import * as costLayersRepository from '../inventory/costing/cost-layers.reposito
 import * as costAllocationsRepository from '../inventory/costing/cost-allocations.repository.js';
 import * as warehousesRepository from '../warehouses/warehouses.repository.js';
 import { assertItemsInScope } from '../../shared/auth/master-data-scope.js';
-import { notifyRole } from '../../shared/notifications/push.js';
+import { notifyStakeholders } from '../../shared/notifications/push.js';
+import { checkLowStock } from '../../shared/notifications/stock-alerts.js';
 
 async function assertReversalTarget(db, reversalOfStockOpnameId, reversalReason) {
   if (!reversalOfStockOpnameId) return;
@@ -94,15 +95,17 @@ export async function submitStockOpname(pool, id) {
   await repository.markSubmitted(pool, id);
   const submitted = await repository.findByIdWithDetails(pool, id);
 
-  // Only admin-bu can approve (segregation of duty, role-matrix.js) — they're
-  // the ones who need to know a document is waiting. The whole block is
-  // best-effort: a failure here (including the warehouse lookup) must never
-  // fail the submit that already succeeded above.
+  // Only admin-bu can approve (segregation of duty, role-matrix.js), but the
+  // admin-warehouse running that warehouse day-to-day wants to know too.
+  // The whole block is best-effort: a failure here (including the
+  // warehouse lookup) must never fail the submit that already succeeded
+  // above.
   try {
     const warehouse = await warehousesRepository.findById(pool, submitted.warehouse_id);
-    await notifyRole(pool, {
-      role: 'admin-bu',
+    await notifyStakeholders(pool, {
       buId: warehouse?.bu_id ?? null,
+      warehouseId: submitted.warehouse_id,
+      warehouseRoles: ['admin-warehouse'],
       title: 'Stock Opname Menunggu Persetujuan',
       body: `${submitted.opname_number} menunggu persetujuan Anda.`,
       data: { type: 'stock_opname', id: submitted.id }
@@ -127,7 +130,8 @@ export async function cancelStockOpname(pool, id) {
 }
 
 export async function approveStockOpname(pool, id, { idempotencyKey, endpoint, body, ttlHours, userId = null }) {
-  return withTransaction(pool, (connection) =>
+  let affectedPairs = [];
+  const result = await withTransaction(pool, (connection) =>
     withIdempotency(connection, { key: idempotencyKey, endpoint, body, ttlHours }, async () => {
       const opname = await repository.findByIdForUpdate(connection, id);
       if (!opname) throw new NotFoundError(`Stock opname ${id} not found`);
@@ -136,6 +140,11 @@ export async function approveStockOpname(pool, id, { idempotencyKey, endpoint, b
       }
 
       const details = await repository.findDetails(connection, id);
+      // Only shortage (difference < 0) lines can push a quantity down into
+      // low/out-of-stock territory — a surplus adjustment only adds stock.
+      affectedPairs = details
+        .filter((d) => d.difference < 0)
+        .map((d) => ({ warehouseId: opname.warehouse_id, itemId: d.item_id }));
 
       for (const detail of details) {
         if (detail.difference === 0) continue;
@@ -224,4 +233,11 @@ export async function approveStockOpname(pool, id, { idempotencyKey, endpoint, b
       return { statusCode: 200, body: { data: approved } };
     })
   );
+
+  // Best-effort, after the transaction has committed — never inside it,
+  // a push-notification network call must not hold a row lock open.
+  if (affectedPairs.length > 0) {
+    checkLowStock(pool, affectedPairs).catch(() => {});
+  }
+  return result;
 }

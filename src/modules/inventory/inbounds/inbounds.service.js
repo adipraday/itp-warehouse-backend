@@ -7,6 +7,8 @@ import * as repository from './inbounds.repository.js';
 import * as stocksRepository from '../stocks/stocks.repository.js';
 import * as stockMutationsRepository from '../stock-mutations/stock-mutations.repository.js';
 import * as costLayersRepository from '../costing/cost-layers.repository.js';
+import * as warehousesRepository from '../../warehouses/warehouses.repository.js';
+import { notifyStakeholders, WAREHOUSE_STAFF_ROLES } from '../../../shared/notifications/push.js';
 
 async function assertReversalTarget(db, reversalOfTransactionId, reversalReason) {
   if (!reversalOfTransactionId) return;
@@ -99,7 +101,7 @@ export async function cancelInbound(pool, id) {
 }
 
 export async function completeInbound(pool, id, { idempotencyKey, endpoint, body, ttlHours, userId = null }) {
-  return withTransaction(pool, (connection) =>
+  const result = await withTransaction(pool, (connection) =>
     withIdempotency(connection, { key: idempotencyKey, endpoint, body, ttlHours }, async () => {
       const transaction = await repository.findByIdForUpdate(connection, id);
       if (!transaction) throw new NotFoundError(`Inbound ${id} not found`);
@@ -145,4 +147,26 @@ export async function completeInbound(pool, id, { idempotencyKey, endpoint, body
       return { statusCode: 200, body: { data: completed } };
     })
   );
+
+  // Best-effort, after the transaction has committed — never inside it,
+  // a push-notification network call must not hold a row lock open. Skip
+  // on `replayed` (a retried Idempotency-Key) — that work already happened
+  // and already notified the first time.
+  if (!result.replayed) {
+    const completed = result.body.data;
+    try {
+      const warehouse = await warehousesRepository.findById(pool, completed.warehouse_id);
+      await notifyStakeholders(pool, {
+        buId: warehouse?.bu_id ?? null,
+        warehouseId: completed.warehouse_id,
+        warehouseRoles: WAREHOUSE_STAFF_ROLES,
+        title: 'Inbound Selesai',
+        body: `${completed.transaction_number} telah selesai diproses.`,
+        data: { type: 'inbound', id: completed.id }
+      });
+    } catch (error) {
+      console.warn('[push] inbound complete notification failed', { id, error: error.message });
+    }
+  }
+  return result;
 }

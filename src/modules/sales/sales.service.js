@@ -13,6 +13,8 @@ import * as warehousesRepository from '../warehouses/warehouses.repository.js';
 import * as contactsRepository from '../contacts/contacts.repository.js';
 import * as paymentsRepository from '../payments/payments.repository.js';
 import { assertItemsInScope, assertContactInScope } from '../../shared/auth/master-data-scope.js';
+import { checkLowStock } from '../../shared/notifications/stock-alerts.js';
+import { notifyStakeholders, WAREHOUSE_STAFF_ROLES } from '../../shared/notifications/push.js';
 import { getBusinessUnitById } from '../../shared/auth/business-units-client.js';
 import { buildReceipt } from './sales.receipt.js';
 
@@ -182,7 +184,8 @@ export async function cancelSale(pool, id) {
 }
 
 export async function completeSale(pool, id, { idempotencyKey, endpoint, body, ttlHours, userId = null }) {
-  return withTransaction(pool, (connection) =>
+  let affectedPairs = [];
+  const result = await withTransaction(pool, (connection) =>
     withIdempotency(connection, { key: idempotencyKey, endpoint, body, ttlHours }, async () => {
       const sale = await repository.findByIdForUpdate(connection, id);
       if (!sale) throw new NotFoundError(`Sale ${id} not found`);
@@ -191,6 +194,7 @@ export async function completeSale(pool, id, { idempotencyKey, endpoint, body, t
       }
 
       const details = await repository.findDetails(connection, id);
+      affectedPairs = details.map((d) => ({ warehouseId: sale.warehouse_id, itemId: d.item_id }));
 
       const transactionId = await outboundsRepository.insertHeader(connection, {
         warehouse_id: sale.warehouse_id,
@@ -263,4 +267,29 @@ export async function completeSale(pool, id, { idempotencyKey, endpoint, body, t
       return { statusCode: 200, body: { data: completed } };
     })
   );
+
+  // Best-effort, after the transaction has committed — never inside it,
+  // a push-notification network call must not hold a row lock open. Skip
+  // on `replayed` (a retried Idempotency-Key) — that work already happened
+  // and already notified the first time.
+  if (affectedPairs.length > 0) {
+    checkLowStock(pool, affectedPairs).catch(() => {});
+  }
+  if (!result.replayed) {
+    const completed = result.body.data;
+    try {
+      const warehouse = await warehousesRepository.findById(pool, completed.warehouse_id);
+      await notifyStakeholders(pool, {
+        buId: warehouse?.bu_id ?? null,
+        warehouseId: completed.warehouse_id,
+        warehouseRoles: WAREHOUSE_STAFF_ROLES,
+        title: 'Penjualan Selesai',
+        body: `${completed.invoice_number} telah selesai diproses.`,
+        data: { type: 'sale', id: completed.id }
+      });
+    } catch (error) {
+      console.warn('[push] sale complete notification failed', { id, error: error.message });
+    }
+  }
+  return result;
 }

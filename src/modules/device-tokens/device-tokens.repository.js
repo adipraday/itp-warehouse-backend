@@ -29,6 +29,30 @@ export async function findTokensForRoleAndBu(db, role, buId) {
   return rows.map((row) => row.fcm_token);
 }
 
+// For a role that isn't BU-scoped (e.g. `owner`) — every device registered
+// under that role, regardless of bu_id.
+export async function findTokensForRole(db, role) {
+  const [rows] = await db.execute('SELECT fcm_token FROM device_tokens WHERE role = ?', [role]);
+  return rows.map((row) => row.fcm_token);
+}
+
+// For the staff actually assigned to a specific warehouse (not BU-wide) —
+// joins against user_warehouse_assignments, so this only reaches people who
+// work at THIS warehouse, not every admin-warehouse/staff-gudang/etc in the
+// whole BU.
+export async function findTokensForWarehouseStaff(db, warehouseId, roles) {
+  if (roles.length === 0) return [];
+  const placeholders = roles.map(() => '?').join(',');
+  const [rows] = await db.execute(
+    `SELECT DISTINCT dt.fcm_token
+     FROM device_tokens dt
+     JOIN user_warehouse_assignments uwa ON uwa.user_id = dt.user_id
+     WHERE uwa.warehouse_id = ? AND dt.role IN (${placeholders})`,
+    [warehouseId, ...roles]
+  );
+  return rows.map((row) => row.fcm_token);
+}
+
 export async function removeTokens(db, tokens) {
   if (tokens.length === 0) return;
   await db.query(`DELETE FROM device_tokens WHERE fcm_token IN (${tokens.map(() => '?').join(',')})`, tokens);

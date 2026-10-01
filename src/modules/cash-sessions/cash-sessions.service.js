@@ -1,6 +1,12 @@
 import { NotFoundError, ConflictError } from '../../shared/errors/app-error.js';
 import { parsePagination } from '../../shared/utils/pagination.js';
 import * as repository from './cash-sessions.repository.js';
+import * as warehousesRepository from '../warehouses/warehouses.repository.js';
+import { notifyStakeholders } from '../../shared/notifications/push.js';
+
+// Rounding noise from decimal math, not a real discrepancy worth paging
+// anyone about.
+const CASH_DIFFERENCE_THRESHOLD = 0.01;
 
 // The system's belief of what should physically be in the drawer right now:
 // starting float + cash collected so far - cash already paid out as
@@ -130,5 +136,31 @@ export async function closeCashSession(db, id, { closing_amount, notes }) {
     cash_difference: cashDifference.toFixed(2),
     notes
   });
+
+  // Best-effort — a notification hiccup must never fail a shift close that
+  // already succeeded above.
+  if (Math.abs(cashDifference) > CASH_DIFFERENCE_THRESHOLD) {
+    try {
+      const warehouse = await warehousesRepository.findById(db, session.warehouse_id);
+      const isShortage = cashDifference < 0;
+      const formattedDifference = `Rp ${Math.abs(cashDifference).toLocaleString('id-ID')}`;
+      const title = isShortage ? 'Selisih Kas: Kurang' : 'Selisih Kas: Lebih';
+      const body = `Sesi kasir #${session.id} ditutup dengan selisih ${formattedDifference} (${isShortage ? 'kurang' : 'lebih'}).`;
+      const data = { type: 'cash_session_discrepancy', id: session.id, warehouse_id: session.warehouse_id };
+
+      await notifyStakeholders(db, {
+        buId: warehouse?.bu_id ?? null,
+        includeOwner: true,
+        warehouseId: session.warehouse_id,
+        warehouseRoles: ['admin-warehouse', 'kasir-sales'],
+        title,
+        body,
+        data
+      });
+    } catch (error) {
+      console.warn('[push] cash session discrepancy notification failed', { id, error: error.message });
+    }
+  }
+
   return { data: await withSummary(db, session) };
 }

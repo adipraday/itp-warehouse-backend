@@ -9,6 +9,9 @@ import * as stockMutationsRepository from '../inventory/stock-mutations/stock-mu
 import * as costLayersRepository from '../inventory/costing/cost-layers.repository.js';
 import * as costAllocationsRepository from '../inventory/costing/cost-allocations.repository.js';
 import { assertItemsInScope } from '../../shared/auth/master-data-scope.js';
+import * as warehousesRepository from '../warehouses/warehouses.repository.js';
+import { notifyStakeholders, notifyWarehouseRoles } from '../../shared/notifications/push.js';
+import { checkLowStock } from '../../shared/notifications/stock-alerts.js';
 
 function assertDifferentWarehouses(payload) {
   if (payload.source_warehouse_id === payload.destination_warehouse_id) {
@@ -61,6 +64,38 @@ export async function createStockTransfer(pool, payload, userId = null, buIds = 
   });
 
   const created = await repository.findByIdWithDetails(pool, id);
+
+  // No separate "submit" step for stock-transfers — a DRAFT is already
+  // awaiting admin-bu's approval the moment it's created. Two warehouses
+  // are involved (source and destination), so their admin-warehouse each
+  // get told separately — admin-bu/owner only once. Best-effort: a failure
+  // here must never fail the create that already succeeded above.
+  try {
+    const title = 'Transfer Stok Menunggu Persetujuan';
+    const body = `${created.transfer_number} menunggu persetujuan Anda.`;
+    const data = { type: 'stock_transfer', id: created.id };
+
+    const sourceWarehouse = await warehousesRepository.findById(pool, created.source_warehouse_id);
+    await notifyStakeholders(pool, {
+      buId: sourceWarehouse?.bu_id ?? null,
+      includeOwner: true,
+      warehouseId: created.source_warehouse_id,
+      warehouseRoles: ['admin-warehouse'],
+      title,
+      body,
+      data
+    });
+    await notifyWarehouseRoles(pool, {
+      warehouseId: created.destination_warehouse_id,
+      roles: ['admin-warehouse'],
+      title,
+      body,
+      data
+    });
+  } catch (error) {
+    console.warn('[push] stock-transfer create notification failed', { id, error: error.message });
+  }
+
   return { data: created };
 }
 
@@ -118,7 +153,8 @@ export async function cancelStockTransfer(pool, id) {
 }
 
 export async function completeStockTransfer(pool, id, { idempotencyKey, endpoint, body, ttlHours, userId = null }) {
-  return withTransaction(pool, (connection) =>
+  let affectedPairs = [];
+  const result = await withTransaction(pool, (connection) =>
     withIdempotency(connection, { key: idempotencyKey, endpoint, body, ttlHours }, async () => {
       const transfer = await repository.findByIdForUpdate(connection, id);
       if (!transfer) throw new NotFoundError(`Stock transfer ${id} not found`);
@@ -127,6 +163,9 @@ export async function completeStockTransfer(pool, id, { idempotencyKey, endpoint
       }
 
       const details = await repository.findDetails(connection, id);
+      // Only the source side can go low/out — the destination only ever
+      // gains stock from this operation.
+      affectedPairs = details.map((d) => ({ warehouseId: transfer.source_warehouse_id, itemId: d.item_id }));
 
       for (const detail of details) {
         await stocksRepository.ensureRow(connection, transfer.source_warehouse_id, detail.item_id);
@@ -212,4 +251,11 @@ export async function completeStockTransfer(pool, id, { idempotencyKey, endpoint
       return { statusCode: 200, body: { data: completed } };
     })
   );
+
+  // Best-effort, after the transaction has committed — never inside it,
+  // a push-notification network call must not hold a row lock open.
+  if (affectedPairs.length > 0) {
+    checkLowStock(pool, affectedPairs).catch(() => {});
+  }
+  return result;
 }

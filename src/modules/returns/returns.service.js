@@ -12,6 +12,9 @@ import * as stockMutationsRepository from '../inventory/stock-mutations/stock-mu
 import * as costLayersRepository from '../inventory/costing/cost-layers.repository.js';
 import * as costAllocationsRepository from '../inventory/costing/cost-allocations.repository.js';
 import { assertItemsInScope, assertContactInScope } from '../../shared/auth/master-data-scope.js';
+import * as warehousesRepository from '../warehouses/warehouses.repository.js';
+import { notifyStakeholders } from '../../shared/notifications/push.js';
+import { checkLowStock } from '../../shared/notifications/stock-alerts.js';
 
 // Validates the origin document and every line, then returns the details
 // enriched with a backend-derived unit_cost (never a client-supplied value).
@@ -120,6 +123,25 @@ export async function createItemReturn(pool, payload, userId = null, buIds = nul
   });
 
   const created = await repository.findByIdWithDetails(pool, id);
+
+  // No separate "submit" step for returns — a DRAFT is already awaiting
+  // admin-bu's approval the moment it's created. Best-effort: a failure
+  // here must never fail the create that already succeeded above.
+  try {
+    const warehouse = await warehousesRepository.findById(pool, created.warehouse_id);
+    const typeLabel = created.type === 'RETURN_CUSTOMER' ? 'Retur Pelanggan' : 'Retur Supplier';
+    await notifyStakeholders(pool, {
+      buId: warehouse?.bu_id ?? null,
+      warehouseId: created.warehouse_id,
+      warehouseRoles: ['admin-warehouse'],
+      title: 'Retur Menunggu Persetujuan',
+      body: `${typeLabel} ${created.return_number} menunggu persetujuan Anda.`,
+      data: { type: 'return', id: created.id }
+    });
+  } catch (error) {
+    console.warn('[push] return create notification failed', { id, error: error.message });
+  }
+
   return { data: created };
 }
 
@@ -353,7 +375,8 @@ async function completeSupplierReturn(connection, itemReturn, details) {
 }
 
 export async function completeItemReturn(pool, id, { idempotencyKey, endpoint, body, ttlHours, userId = null }) {
-  return withTransaction(pool, (connection) =>
+  let affectedPairs = [];
+  const result = await withTransaction(pool, (connection) =>
     withIdempotency(connection, { key: idempotencyKey, endpoint, body, ttlHours }, async () => {
       const itemReturn = await repository.findByIdForUpdate(connection, id);
       if (!itemReturn) throw new NotFoundError(`Return ${id} not found`);
@@ -362,6 +385,10 @@ export async function completeItemReturn(pool, id, { idempotencyKey, endpoint, b
       }
 
       const details = await repository.findDetails(connection, id);
+      // A RETURN_SUPPLIER sends everything back out; a RETURN_CUSTOMER only
+      // decrements on REPLACE lines. Checking every touched item regardless
+      // is harmless — a line that only added stock just won't be low/out.
+      affectedPairs = details.map((d) => ({ warehouseId: itemReturn.warehouse_id, itemId: d.item_id }));
 
       const replacementTransactionId =
         itemReturn.type === 'RETURN_CUSTOMER'
@@ -374,4 +401,11 @@ export async function completeItemReturn(pool, id, { idempotencyKey, endpoint, b
       return { statusCode: 200, body: { data: completed } };
     })
   );
+
+  // Best-effort, after the transaction has committed — never inside it,
+  // a push-notification network call must not hold a row lock open.
+  if (affectedPairs.length > 0) {
+    checkLowStock(pool, affectedPairs).catch(() => {});
+  }
+  return result;
 }

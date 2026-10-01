@@ -9,6 +9,9 @@ import * as costLayersRepository from '../costing/cost-layers.repository.js';
 import * as costAllocationsRepository from '../costing/cost-allocations.repository.js';
 import { allocateFifo } from '../costing/fifo-allocator.js';
 import { assertItemsInScope, assertContactInScope } from '../../../shared/auth/master-data-scope.js';
+import * as warehousesRepository from '../../warehouses/warehouses.repository.js';
+import { checkLowStock } from '../../../shared/notifications/stock-alerts.js';
+import { notifyStakeholders, WAREHOUSE_STAFF_ROLES } from '../../../shared/notifications/push.js';
 
 async function assertReversalTarget(db, reversalOfTransactionId, reversalReason) {
   if (!reversalOfTransactionId) return;
@@ -101,7 +104,8 @@ export async function cancelOutbound(pool, id) {
 }
 
 export async function completeOutbound(pool, id, { idempotencyKey, endpoint, body, ttlHours, userId = null }) {
-  return withTransaction(pool, (connection) =>
+  let affectedPairs = [];
+  const result = await withTransaction(pool, (connection) =>
     withIdempotency(connection, { key: idempotencyKey, endpoint, body, ttlHours }, async () => {
       const transaction = await repository.findByIdForUpdate(connection, id);
       if (!transaction) throw new NotFoundError(`Outbound ${id} not found`);
@@ -110,6 +114,7 @@ export async function completeOutbound(pool, id, { idempotencyKey, endpoint, bod
       }
 
       const details = await repository.findDetails(connection, id);
+      affectedPairs = details.map((d) => ({ warehouseId: transaction.warehouse_id, itemId: d.item_id }));
 
       for (const detail of details) {
         await stocksRepository.ensureRow(connection, transaction.warehouse_id, detail.item_id);
@@ -166,4 +171,29 @@ export async function completeOutbound(pool, id, { idempotencyKey, endpoint, bod
       return { statusCode: 200, body: { data: completed } };
     })
   );
+
+  // Best-effort, after the transaction has committed — never inside it,
+  // a push-notification network call must not hold a row lock open. Skip
+  // on `replayed` (a retried Idempotency-Key) — that work already happened
+  // and already notified the first time.
+  if (affectedPairs.length > 0) {
+    checkLowStock(pool, affectedPairs).catch(() => {});
+  }
+  if (!result.replayed) {
+    const completed = result.body.data;
+    try {
+      const warehouse = await warehousesRepository.findById(pool, completed.warehouse_id);
+      await notifyStakeholders(pool, {
+        buId: warehouse?.bu_id ?? null,
+        warehouseId: completed.warehouse_id,
+        warehouseRoles: WAREHOUSE_STAFF_ROLES,
+        title: 'Outbound Selesai',
+        body: `${completed.transaction_number} telah selesai diproses.`,
+        data: { type: 'outbound', id: completed.id }
+      });
+    } catch (error) {
+      console.warn('[push] outbound complete notification failed', { id, error: error.message });
+    }
+  }
+  return result;
 }
