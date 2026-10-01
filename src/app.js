@@ -28,6 +28,8 @@ import { invoicesRoutes } from './modules/invoices/invoices.routes.js';
 import { paymentsRoutes } from './modules/payments/payments.routes.js';
 import { returnsRoutes } from './modules/returns/returns.routes.js';
 import { dashboardRoutes } from './modules/dashboard/dashboard.routes.js';
+import { deviceTokensRoutes } from './modules/device-tokens/device-tokens.routes.js';
+import { initFirebaseMessaging } from './shared/notifications/firebase-admin.js';
 
 export async function buildApp({ logger = true } = {}) {
   const app = Fastify({ logger });
@@ -63,6 +65,8 @@ export async function buildApp({ logger = true } = {}) {
   app.addHook('onClose', async () => pool.end());
   app.setErrorHandler(errorHandler);
 
+  initFirebaseMessaging({ serviceAccountPath: app.config.FIREBASE_SERVICE_ACCOUNT_PATH, logger: app.log });
+
   await registerUserContext(app);
   // Must run after registerUserContext (needs request.userContext.userId/role)
   // and before every /api/* route — resolves per-warehouse staff scoping and
@@ -95,6 +99,7 @@ export async function buildApp({ logger = true } = {}) {
   await app.register(activityLogsRoutes, { prefix: '/api/activity-logs' });
   await app.register(meRoutes, { prefix: '/api/me' });
   await app.register(userWarehouseAssignmentsRoutes, { prefix: '/api/user-warehouse-assignments' });
+  await app.register(deviceTokensRoutes, { prefix: '/api/device-tokens' });
 
   return app;
 }

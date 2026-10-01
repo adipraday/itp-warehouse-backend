@@ -402,3 +402,83 @@ dipakai user manapun sampai sisi auth-backend di-update & di-deploy.
   di DB VPS, container `app` di-rebuild (`docker compose up -d --build app`). Dikonfirmasi:
   `GET https://auth.itpintar.co.id/roles` (token super-admin) sekarang menampilkan
   `admin-warehouse` di daftar. Silakan mulai provisioning user dengan role ini kapan pun.
+
+## 13. 🔧 Insiden produksi: semua token ditolak setelah redeploy auth-backend (2026-09-30)
+
+### Gejala
+
+User login berhasil (auth-backend menerbitkan token baru, valid), tapi **setiap** request ke
+warehouse-service langsung balik `401` dengan pesan `"Invalid or expired token"` — termasuk
+dashboard yang butuh dipanggil segera setelah login. Bukan token yang expired beneran (baru
+diterbitkan), dan konsisten 100% (bukan sesekali) — semua user, semua role, kena.
+
+### Root cause
+
+Container `skinet-auth-api-app-1` di-redeploy/recreate ~2026-09-28 (bukti: `docker ps` nunjukin
+uptime container itu jauh lebih pendek daripada `warehouse-system-api-app-1` yang sudah jalan
+8 hari tanpa restart). Dugaan awal (mismatch `AUTH_JWT_ISSUER`/`JWT_ISSUER` atau
+`AUTH_JWT_AUDIENCE`/`JWT_AUDIENCE` antara dua `.env` — risiko yang sudah diwanti-wanti di §7 dan
+di `deployment-vps.md` kedua sisi) **sudah dicek dan TIDAK terbukti** — kedua env persis sama
+(`https://auth.itpintar.co.id/` dan `warehouse-system-api`).
+
+Penyebab sebenarnya: `user-context.js` verifikasi token pakai `jose`'s `createRemoteJWKSet(...)`,
+dibuat **sekali** saat `registerUserContext()` jalan di boot (`user-context.js:72`), dan disimpan
+in-memory selama proses hidup. `jose` cuma fetch ulang JWKS kalau ketemu `kid` yang **belum ada**
+di cache-nya — kalau `kid` sudah dikenal, dia percaya begitu saja key lama itu masih valid, tanpa
+pernah cross-check apakah isi key-nya sudah berubah.
+
+Kalau auth-backend rotasi keypair RS256 tapi **`JWT_KEY_ID` tetap sama** (di produksi saat ini:
+`prod-1`, lihat `src/config/env.js` `keyId: process.env.JWT_KEY_ID || 'dev-1'`), warehouse-service
+yang sudah jalan lama nggak akan pernah tahu key-nya berubah — `kid` di token baru = `kid` yang
+sudah di-cache, jadi `jose` pakai public key LAMA buat verifikasi signature token yang ditandatangani
+pakai private key BARU → verifikasi gagal → `401 "Invalid or expired token"` buat **setiap** token
+baru, sampai proses warehouse-service itu sendiri di-restart (yang otomatis bikin instance
+`createRemoteJWKSet` baru, cache kosong, fetch ulang key terbaru).
+
+### Fix yang diterapkan (2026-09-30)
+
+```bash
+docker restart warehouse-system-api-app-1
+```
+
+Diverifikasi: login + load dashboard langsung normal lagi setelah restart, tanpa perubahan kode
+atau `.env` sama sekali.
+
+Catatan tambahan: key RS256 di auth-backend **bind-mounted dari host** (`./keys` di
+`docker-compose.yml`), bukan digenerate ulang tiap `docker compose up -d --build` — jadi
+kemungkinan besar pemicunya adalah seseorang manual jalanin `node scripts/generate-keys.mjs`
+(lihat `keys/README.md`) buat rotasi, tapi lupa/skip langkah "bump `JWT_KEY_ID`" yang sudah
+didokumentasikan di situ. Siapa pun yang pegang server dan menjalankan script itu perlu ingat
+langkah itu WAJIB, bukan opsional.
+
+### Runbook — supaya nggak kejadian lagi
+
+**Setiap kali auth-backend rotasi keypair JWT produksi** (baik sengaja rotasi terjadwal, maupun
+tidak sengaja karena container di-recreate dari image/volume yang beda), lakukan SALAH SATU dari
+dua ini — #1 lebih baik karena menghilangkan ketergantungan koordinasi manual:
+
+1. **(Disarankan) Selalu bump `JWT_KEY_ID` setiap kali key benar-benar berubah** — misal
+   `prod-1` → `prod-2` — di `.env` auth-backend, lalu redeploy. `kid` baru otomatis bikin `jose`
+   di warehouse-service (dan konsumer JWT lain mana pun, termasuk `iwarga-api` kalau dia juga
+   verifikasi token yang sama) fetch ulang JWKS sendiri, tanpa perlu restart manual apa pun.
+2. **(Minimal) Restart semua service yang verifikasi token auth-backend, di deploy step yang
+   sama** dengan redeploy auth-backend — jangan anggap ini opsional/terpisah:
+   ```bash
+   docker restart warehouse-system-api-app-1
+   docker restart iwarga-api-app-1   # kalau service ini juga verifikasi token dari auth-backend yang sama
+   ```
+
+**Cara cepat diagnosa kalau gejala serupa muncul lagi** (401 "Invalid or expired token" konsisten,
+langsung setelah login, token belum expired):
+
+```bash
+# 1. Bandingkan uptime container — kalau auth-backend jauh lebih baru dari konsumernya, curigai ini duluan
+docker ps -a
+
+# 2. Pastikan issuer/audience beneran sama (biar nggak salah kambing hitam kayak insiden ini)
+docker exec skinet-auth-api-app-1 printenv | grep -iE "JWT_ISSUER|JWT_AUDIENCE|JWT_KEY_ID"
+docker exec warehouse-system-api-app-1 printenv | grep -iE "AUTH_JWT_ISSUER|AUTH_JWT_AUDIENCE"
+
+# 3. Kalau env cocok tapi tetap gagal → restart konsumernya (low-risk, downtime cuma beberapa detik)
+docker restart warehouse-system-api-app-1
+```

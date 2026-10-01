@@ -8,7 +8,9 @@ import * as stocksRepository from '../inventory/stocks/stocks.repository.js';
 import * as stockMutationsRepository from '../inventory/stock-mutations/stock-mutations.repository.js';
 import * as costLayersRepository from '../inventory/costing/cost-layers.repository.js';
 import * as costAllocationsRepository from '../inventory/costing/cost-allocations.repository.js';
+import * as warehousesRepository from '../warehouses/warehouses.repository.js';
 import { assertItemsInScope } from '../../shared/auth/master-data-scope.js';
+import { notifyRole } from '../../shared/notifications/push.js';
 
 async function assertReversalTarget(db, reversalOfStockOpnameId, reversalReason) {
   if (!reversalOfStockOpnameId) return;
@@ -91,6 +93,24 @@ export async function submitStockOpname(pool, id) {
 
   await repository.markSubmitted(pool, id);
   const submitted = await repository.findByIdWithDetails(pool, id);
+
+  // Only admin-bu can approve (segregation of duty, role-matrix.js) — they're
+  // the ones who need to know a document is waiting. The whole block is
+  // best-effort: a failure here (including the warehouse lookup) must never
+  // fail the submit that already succeeded above.
+  try {
+    const warehouse = await warehousesRepository.findById(pool, submitted.warehouse_id);
+    await notifyRole(pool, {
+      role: 'admin-bu',
+      buId: warehouse?.bu_id ?? null,
+      title: 'Stock Opname Menunggu Persetujuan',
+      body: `${submitted.opname_number} menunggu persetujuan Anda.`,
+      data: { type: 'stock_opname', id: submitted.id }
+    });
+  } catch (error) {
+    console.warn('[push] stock-opname submit notification failed', { id, error: error.message });
+  }
+
   return { data: submitted };
 }
 

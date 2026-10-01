@@ -25,7 +25,13 @@ const schema = {
     // src/shared/auth/business-units-client.js.
     AUTH_API_URL: { type: 'string', default: 'http://localhost:5020' },
     // Must match the auth-backend's own SERVICE_API_KEY — sent as `X-Service-Key`.
-    SERVICE_API_KEY: { type: 'string', default: 'dev-service-key-local' }
+    SERVICE_API_KEY: { type: 'string', default: 'dev-service-key-local' },
+    // Firebase Admin SDK service account (push notifications) — bind-mounted
+    // from the host in production, same pattern as skinet-auth-api's
+    // keys/jwt-private.pem. Missing/unreadable is tolerated at boot (push
+    // sending just becomes a no-op, logged once) so local dev without a
+    // service account file still runs.
+    FIREBASE_SERVICE_ACCOUNT_PATH: { type: 'string', default: './keys/firebase-service-account.json' }
   }
 };
 

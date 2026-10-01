@@ -46,6 +46,11 @@ services:
       # DB is reached by service name, not 127.0.0.1.
       DB_HOST: db
       DB_PORT: 3306
+    volumes:
+      # Firebase Admin SDK service account (push notifications) — same
+      # bind-mount-from-host pattern as skinet-auth-api's keys/, never baked
+      # into the image. Read-only: this container only ever reads it.
+      - ./keys:/app/keys:ro
     ports:
       # Bind to loopback only — nginx on the VPS host proxies to this; not reachable from
       # outside the VPS directly (see deploy/nginx-api-wms.conf).

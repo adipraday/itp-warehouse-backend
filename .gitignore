@@ -3,6 +3,10 @@ node_modules/
 coverage/
 tmp/
 
+# Firebase Admin SDK service account — secret, bind-mounted from the host in
+# production (same pattern as skinet-auth-api's keys/), never committed.
+keys/
+
 # Claude Code local dev-launch config — machine/session-specific (hardcoded local path), bukan
 # bagian source project.
 .claude/
