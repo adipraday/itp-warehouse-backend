@@ -29,6 +29,7 @@ import { paymentsRoutes } from './modules/payments/payments.routes.js';
 import { returnsRoutes } from './modules/returns/returns.routes.js';
 import { dashboardRoutes } from './modules/dashboard/dashboard.routes.js';
 import { deviceTokensRoutes } from './modules/device-tokens/device-tokens.routes.js';
+import { notificationsRoutes } from './modules/notifications/notifications.routes.js';
 import { initFirebaseMessaging } from './shared/notifications/firebase-admin.js';
 
 export async function buildApp({ logger = true } = {}) {
@@ -100,6 +101,7 @@ export async function buildApp({ logger = true } = {}) {
   await app.register(meRoutes, { prefix: '/api/me' });
   await app.register(userWarehouseAssignmentsRoutes, { prefix: '/api/user-warehouse-assignments' });
   await app.register(deviceTokensRoutes, { prefix: '/api/device-tokens' });
+  await app.register(notificationsRoutes, { prefix: '/api/notifications' });
 
   return app;
 }

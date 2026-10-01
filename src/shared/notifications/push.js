@@ -1,16 +1,28 @@
 import { getMessaging } from './firebase-admin.js';
 import * as deviceTokensRepository from '../../modules/device-tokens/device-tokens.repository.js';
+import * as notificationsRepository from '../../modules/notifications/notifications.repository.js';
 
 const DEAD_TOKEN_ERROR_CODES = new Set([
   'messaging/registration-token-not-registered',
   'messaging/invalid-registration-token'
 ]);
 
-async function sendToTokens(db, tokens, { title, body, data = {} }) {
-  if (tokens.length === 0) return;
+// `recipients` is [{user_id, fcm_token}], not a plain token list — every
+// targeted user gets one inbox row (see notifications.repository.js),
+// deduped by user_id since the same person can have several devices
+// registered. This write happens regardless of whether FCM is configured or
+// the send below succeeds, so the in-app inbox works even with Firebase
+// unset or down.
+async function sendToTokens(db, recipients, { title, body, data = {}, type = 'general' }) {
+  if (recipients.length === 0) return;
+
+  const userIds = [...new Set(recipients.map((r) => r.user_id))];
+  await notificationsRepository.createForUsers(db, userIds, { title, body, type, data });
+
   const messaging = getMessaging();
   if (!messaging) return;
 
+  const tokens = recipients.map((r) => r.fcm_token);
   const response = await messaging.sendEachForMulticast({
     tokens,
     notification: { title, body },
@@ -44,8 +56,8 @@ async function sendToTokens(db, tokens, { title, body, data = {} }) {
 export async function notifyRole(db, { role, buId, title, body, data = {} }) {
   try {
     if (buId == null) return;
-    const tokens = await deviceTokensRepository.findTokensForRoleAndBu(db, role, buId);
-    await sendToTokens(db, tokens, { title, body, data });
+    const recipients = await deviceTokensRepository.findTokensForRoleAndBu(db, role, buId);
+    await sendToTokens(db, recipients, { title, body, data, type: data.type });
   } catch (error) {
     console.warn('[push] notifyRole failed', { role, buId, error: error.message });
   }
@@ -55,8 +67,8 @@ export async function notifyRole(db, { role, buId, title, body, data = {} }) {
 // that role, regardless of bu_id.
 export async function notifyAllWithRole(db, { role, title, body, data = {} }) {
   try {
-    const tokens = await deviceTokensRepository.findTokensForRole(db, role);
-    await sendToTokens(db, tokens, { title, body, data });
+    const recipients = await deviceTokensRepository.findTokensForRole(db, role);
+    await sendToTokens(db, recipients, { title, body, data, type: data.type });
   } catch (error) {
     console.warn('[push] notifyAllWithRole failed', { role, error: error.message });
   }
@@ -74,8 +86,8 @@ export const WAREHOUSE_STAFF_ROLES = ['admin-warehouse', 'staff-gudang', 'kasir-
 export async function notifyWarehouseRoles(db, { warehouseId, roles, title, body, data = {} }) {
   try {
     if (warehouseId == null || roles.length === 0) return;
-    const tokens = await deviceTokensRepository.findTokensForWarehouseStaff(db, warehouseId, roles);
-    await sendToTokens(db, tokens, { title, body, data });
+    const recipients = await deviceTokensRepository.findTokensForWarehouseStaff(db, warehouseId, roles);
+    await sendToTokens(db, recipients, { title, body, data, type: data.type });
   } catch (error) {
     console.warn('[push] notifyWarehouseRoles failed', { warehouseId, roles, error: error.message });
   }

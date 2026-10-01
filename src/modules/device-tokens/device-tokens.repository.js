@@ -23,17 +23,22 @@ export async function remove(db, fcm_token) {
   await db.execute('DELETE FROM device_tokens WHERE fcm_token = ?', [fcm_token]);
 }
 
-// Used by the push-sending helper only — never exposed over HTTP.
+// Used by the push-sending helper only — never exposed over HTTP. Returns
+// {user_id, fcm_token} rows (not just tokens) — push.js needs user_id to
+// write a notification-inbox row per recipient, not just a token to send to.
 export async function findTokensForRoleAndBu(db, role, buId) {
-  const [rows] = await db.execute('SELECT fcm_token FROM device_tokens WHERE role = ? AND bu_id = ?', [role, buId]);
-  return rows.map((row) => row.fcm_token);
+  const [rows] = await db.execute(
+    'SELECT user_id, fcm_token FROM device_tokens WHERE role = ? AND bu_id = ?',
+    [role, buId]
+  );
+  return rows;
 }
 
 // For a role that isn't BU-scoped (e.g. `owner`) — every device registered
 // under that role, regardless of bu_id.
 export async function findTokensForRole(db, role) {
-  const [rows] = await db.execute('SELECT fcm_token FROM device_tokens WHERE role = ?', [role]);
-  return rows.map((row) => row.fcm_token);
+  const [rows] = await db.execute('SELECT user_id, fcm_token FROM device_tokens WHERE role = ?', [role]);
+  return rows;
 }
 
 // For the staff actually assigned to a specific warehouse (not BU-wide) —
@@ -44,13 +49,13 @@ export async function findTokensForWarehouseStaff(db, warehouseId, roles) {
   if (roles.length === 0) return [];
   const placeholders = roles.map(() => '?').join(',');
   const [rows] = await db.execute(
-    `SELECT DISTINCT dt.fcm_token
+    `SELECT DISTINCT dt.user_id, dt.fcm_token
      FROM device_tokens dt
      JOIN user_warehouse_assignments uwa ON uwa.user_id = dt.user_id
      WHERE uwa.warehouse_id = ? AND dt.role IN (${placeholders})`,
     [warehouseId, ...roles]
   );
-  return rows.map((row) => row.fcm_token);
+  return rows;
 }
 
 export async function removeTokens(db, tokens) {
