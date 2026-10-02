@@ -1,7 +1,10 @@
 const COLUMNS = 'id, user_id, title, body, type, data, is_read, created_at';
 
 function parseRow(row) {
-  return { ...row, is_read: Boolean(row.is_read), data: row.data ? JSON.parse(row.data) : null };
+  // mysql2 already decodes a JSON-typed column to a JS object — only
+  // JSON.parse it if it somehow comes back as a raw string.
+  const data = typeof row.data === 'string' ? JSON.parse(row.data) : (row.data ?? null);
+  return { ...row, is_read: Boolean(row.is_read), data };
 }
 
 // Called from push.js's sendToTokens, after deduping recipients down to
