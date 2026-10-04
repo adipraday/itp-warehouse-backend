@@ -1100,6 +1100,39 @@ validasi role tidak dikenal.
 
 ---
 
+## 29. Inbox notifikasi in-app (2026-10-05)
+
+Setiap event yang memicu push FCM (sale/inbound/outbound selesai, return, stock opname & transfer
+diajukan, pembayaran pembelian, stok menipis/habis, selisih kas sesi kasir) **juga dicatat sebagai
+baris inbox per user penerima**. Endpoint — semua self-scoped ke user yang login, tanpa gating role:
+
+```
+GET   /api/notifications?page=1&per_page=20     -> { data: [...], meta: {page, per_page, total} }  (terbaru dulu)
+GET   /api/notifications/unread-count           -> { data: { count } }
+PATCH /api/notifications/:id/read               -> { data: <notifikasi, is_read: true> }  (404 kalau bukan milik user)
+PATCH /api/notifications/read-all               -> { data: { updated_count } }
+```
+
+Object: `{ id, user_id, title, body, type, data, is_read, created_at }`. `data` = payload yang sama
+dengan data-message FCM; `data.type` + id-nya menentukan dokumen tujuan: `inbound`/`outbound`/`sale`/
+`return`/`stock_opname`/`stock_transfer` → `data.id`; `purchase_payment` → `data.invoice_id` (`data.id` =
+id payment); `low_stock`/`out_of_stock` → `data.item_id` + `data.warehouse_id`; `cash_session_discrepancy` →
+`data.id` (id sesi) + `data.warehouse_id`.
+
+**Siapa yang dapat baris inbox** (update 2026-10-05): sebelumnya cuma user yang punya device token
+FCM terdaftar (aplikasi mobile), jadi pengguna web-only selalu melihat inbox kosong. Sekarang
+penerima = gabungan **(a)** pemilik device token yang cocok **dan (b)** user di tabel `user_directory`
+yang cocok role/BU/warehouse-nya — **tanpa perlu device token**. `user_directory` diisi otomatis dari
+claim JWT yang sudah terverifikasi pada setiap request terautentikasi (di-throttle, tidak menulis tiap
+request), jadi **user baru muncul sebagai penerima setelah request pertamanya** ke API ini; event
+yang terjadi sebelum itu tidak di-backfill. Push FCM tetap hanya ke device token. Satu user = satu
+baris per event walau cocok di kedua jalur / punya banyak device.
+
+Catatan scoping: untuk `owner`, jalur direktori hanya menarget owner yang token-nya mencakup BU event
+tersebut (`bu_ids`); jalur device-token lama untuk `owner` tetap role-wide (tidak berubah).
+
+---
+
 ## Dokumen terkait
 
 - [`api-documentation.md`](./api-documentation.md) — referensi lengkap tiap endpoint resource

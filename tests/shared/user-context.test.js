@@ -16,6 +16,9 @@ vi.mock('jose', async (importOriginal) => {
   };
 });
 
+const directory = vi.hoisted(() => ({ upsert: vi.fn() }));
+vi.mock('../../src/modules/user-directory/user-directory.repository.js', () => directory);
+
 const ISSUER = 'https://auth.local/';
 const AUDIENCE = 'warehouse-system-api';
 
@@ -254,5 +257,74 @@ describe('registerUserContext — hybrid mode', () => {
     const request = makeRequest();
 
     await expect(hook(request)).resolves.toBeUndefined();
+  });
+});
+
+describe('registerUserContext — user_directory recording', () => {
+  async function buildHookWithDb(mode) {
+    const app = makeApp({
+      AUTH_MODE: mode,
+      AUTH_JWKS_URL: 'https://auth.local/.well-known/jwks.json',
+      AUTH_JWT_ISSUER: ISSUER,
+      AUTH_JWT_AUDIENCE: AUDIENCE
+    });
+    app.db = { tag: 'db' };
+    await registerUserContext(app);
+    return { hook: app.hooks.onRequest, db: app.db };
+  }
+
+  it('records a verified token user into user_directory (token-independent inbox recipients)', async () => {
+    directory.upsert.mockReset();
+    directory.upsert.mockResolvedValue(undefined);
+    const { hook, db } = await buildHookWithDb('jwt');
+    const token = await signToken({ user_id: 31, role: 'admin-warehouse', bu_id: 4, bu_ids: [4] });
+
+    await hook(makeRequest({ headers: { authorization: `Bearer ${token}` } }));
+
+    expect(directory.upsert).toHaveBeenCalledWith(db, { user_id: 31, role: 'admin-warehouse', bu_id: 4, bu_ids: [4] });
+  });
+
+  it('does not write again for the same user on the next request', async () => {
+    directory.upsert.mockReset();
+    directory.upsert.mockResolvedValue(undefined);
+    const { hook } = await buildHookWithDb('jwt');
+    const token = await signToken({ user_id: 32, role: 'admin-bu', bu_id: 4 });
+    const request = () => makeRequest({ headers: { authorization: `Bearer ${token}` } });
+
+    await hook(request());
+    await hook(request());
+
+    expect(directory.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it('never records identities that came from the unauthenticated legacy headers', async () => {
+    directory.upsert.mockReset();
+    const { hook } = await buildHookWithDb('hybrid');
+
+    await hook(makeRequest({ headers: { 'x-user-id': '99', 'x-user-role': 'admin-bu', 'x-bu-id': '4' } }));
+
+    expect(directory.upsert).not.toHaveBeenCalled();
+  });
+
+  it('does not record anything for a token that fails verification', async () => {
+    directory.upsert.mockReset();
+    const { hook } = await buildHookWithDb('jwt');
+    const token = await signToken({ user_id: 33, role: 'admin-bu', bu_id: 4 }, { audience: 'someone-else' });
+
+    await expect(hook(makeRequest({ headers: { authorization: `Bearer ${token}` } }))).rejects.toMatchObject({
+      statusCode: 401
+    });
+    expect(directory.upsert).not.toHaveBeenCalled();
+  });
+
+  it('a failing directory write never fails the authenticated request', async () => {
+    directory.upsert.mockReset();
+    directory.upsert.mockRejectedValue(new Error('db down'));
+    const { hook } = await buildHookWithDb('jwt');
+    const token = await signToken({ user_id: 34, role: 'admin-bu', bu_id: 4 });
+    const request = makeRequest({ headers: { authorization: `Bearer ${token}` } });
+
+    await expect(hook(request)).resolves.toBeUndefined();
+    expect(request.userContext.userId).toBe(34);
   });
 });

@@ -1,4 +1,5 @@
 import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { createUserDirectoryRecorder } from './user-directory-sync.js';
 
 // Verifies the auth backend's RS256 access token via its JWKS endpoint and
 // populates request.userContext: { userId, role, buId, buIds }.
@@ -70,6 +71,10 @@ export async function registerUserContext(app) {
   // Lazy/cached: does not fetch the JWKS at startup, only on first verification
   // that needs a matching kid, so the server still boots if the auth backend is down.
   const jwks = mode !== 'header' ? createRemoteJWKSet(new URL(app.config.AUTH_JWKS_URL)) : null;
+  // Feeds user_directory (token-independent notification-inbox recipients) from
+  // VERIFIED claims only — never from the legacy X-User-* headers, which are
+  // unauthenticated in hybrid/header mode and must not be able to mint directory rows.
+  const recordUser = createUserDirectoryRecorder();
 
   // onRequest (not preHandler): auth must run before body parsing & schema
   // validation, so an unauthenticated request gets 401 rather than a 400 for a
@@ -98,6 +103,9 @@ export async function registerUserContext(app) {
             buId,
             buIds: resolveBuIds(payload, buId)
           };
+          // app.db is decorated before this hook is registered (see app.js); optional here only
+          // so the bare fake apps in tests/shared/user-context.test.js keep working.
+          recordUser(app.db, context, request.log);
         } catch (error) {
           request.log.warn({ err: error.message }, 'JWT verify failed');
           if (mode === 'jwt') {
