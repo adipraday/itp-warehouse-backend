@@ -46,7 +46,7 @@ export async function warehousesRoutes(app) {
       app.db,
       request.query,
       request.userContext?.buIds,
-      request.userContext?.assignedWarehouseIds
+      request.query.scope === 'bu' ? null : request.userContext?.assignedWarehouseIds
     );
   });
 

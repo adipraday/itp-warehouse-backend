@@ -199,6 +199,65 @@ describe('buScope()', () => {
     ).resolves.toBeUndefined();
   });
 
+  describe('stock-transfers with a per-warehouse assignment', () => {
+    const warehouses = [
+      { id: 22, bu_id: 11 },
+      { id: 24, bu_id: 11 },
+      { id: 30, bu_id: 12 }
+    ];
+    const assigned = { userId: 1, role: 'admin-warehouse', buIds: [11], assignedWarehouseIds: [22] };
+
+    it('lets a user assigned only to the source pick any warehouse in their BU as destination', async () => {
+      const hook = buScope('stock-transfers');
+      await expect(
+        hook(
+          makeRequest({
+            userContext: assigned,
+            body: { source_warehouse_id: 22, destination_warehouse_id: 24 },
+            db: makeDb({ warehouses })
+          })
+        )
+      ).resolves.toBeUndefined();
+    });
+
+    it("still rejects a destination outside the caller's BU", async () => {
+      const hook = buScope('stock-transfers');
+      await expect(
+        hook(
+          makeRequest({
+            userContext: assigned,
+            body: { source_warehouse_id: 22, destination_warehouse_id: 30 },
+            db: makeDb({ warehouses })
+          })
+        )
+      ).rejects.toMatchObject({ statusCode: 403 });
+    });
+
+    it('still rejects a source warehouse the user is not assigned to', async () => {
+      const hook = buScope('stock-transfers');
+      await expect(
+        hook(
+          makeRequest({
+            userContext: assigned,
+            body: { source_warehouse_id: 24, destination_warehouse_id: 22 },
+            db: makeDb({ warehouses })
+          })
+        )
+      ).rejects.toMatchObject({ statusCode: 403 });
+    });
+
+    it('lets either side read an existing transfer, but only the source change it', async () => {
+      const docs = { stock_transfers: [{ id: 5, result: { w1: 24, w2: 22 } }] };
+      const hook = buScope('stock-transfers');
+      await expect(
+        hook({ ...makeRequest({ userContext: assigned, params: { id: '5' }, db: makeDb({ warehouses, docs }) }), method: 'GET' })
+      ).resolves.toBeUndefined();
+      await expect(
+        hook({ ...makeRequest({ userContext: assigned, params: { id: '5' }, db: makeDb({ warehouses, docs }) }), method: 'POST' })
+      ).rejects.toMatchObject({ statusCode: 403 });
+    });
+  });
+
   it('passes when the warehouse belongs to the SECOND of several allowed business units (grant/owner)', async () => {
     const db = makeDb({ warehouses: [{ id: 23, bu_id: 12 }] });
     const hook = buScope('inbounds');

@@ -92,9 +92,20 @@ export const provisionDefaultWarehouseSchema = {
   }
 };
 
+// `scope=bu` lists every warehouse in the caller's business unit(s) even for a
+// user assigned to just one of them (e.g. admin-warehouse picking the
+// destination of a stock transfer). Default stays the narrowed, assigned-only list.
+const listQuerystring = {
+  type: 'object',
+  properties: {
+    ...paginationQuerystring.properties,
+    scope: { type: 'string', enum: ['assigned', 'bu'], default: 'assigned' }
+  }
+};
+
 export const listWarehousesSchema = {
   tags: ['warehouses'],
-  querystring: paginationQuerystring,
+  querystring: listQuerystring,
   response: {
     200: {
       type: 'object',

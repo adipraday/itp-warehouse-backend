@@ -76,12 +76,24 @@ export function buScope(resource) {
 
     const db = request.server.db;
     const ids = new Set();
+    // Subset of `ids` that must ALSO be in the caller's assigned warehouses.
+    // Everything is in here by default; stock-transfers carves out the
+    // destination side below (see isTransfer).
+    const assignedCheckIds = new Set();
+
+    // A stock transfer legitimately spans two warehouses, and a staff user
+    // assigned to only the sending one still has to be able to pick any
+    // warehouse in their BU as the destination — so there the destination is
+    // checked against the BU only, never against the assignment list.
+    const isTransfer = resource === 'stock-transfers';
 
     for (const source of [request.body, request.query]) {
       if (!source || typeof source !== 'object') continue;
       for (const key of BODY_KEYS) {
         const id = positiveInt(source[key]);
-        if (id) ids.add(id);
+        if (!id) continue;
+        ids.add(id);
+        if (!(isTransfer && key === 'destination_warehouse_id')) assignedCheckIds.add(id);
       }
     }
 
@@ -99,9 +111,22 @@ export function buScope(resource) {
         ids.add(docId); // the :id IS the warehouse
       } else if (DOC_WAREHOUSE_SQL[resource]) {
         const [rows] = await db.execute(DOC_WAREHOUSE_SQL[resource], [docId]);
-        for (const value of Object.values(rows[0] ?? {})) {
-          const id = positiveInt(value);
-          if (id) ids.add(id);
+        const docWarehouseIds = Object.values(rows[0] ?? {})
+          .map(positiveInt)
+          .filter(Boolean);
+        for (const id of docWarehouseIds) ids.add(id);
+        if (isTransfer) {
+          // Reading a transfer is allowed from either side of it; changing
+          // one (anything but GET) needs the SOURCE warehouse assigned.
+          // Row keys are w1 (source) then w2 (destination).
+          const [sourceId, destinationId] = [positiveInt(rows[0]?.w1), positiveInt(rows[0]?.w2)];
+          const mayTouch = request.method === 'GET' ? [sourceId, destinationId] : [sourceId];
+          const allowed = assignedWarehouseIds == null ? null : assignedWarehouseIds.map(Number);
+          if (allowed != null && docWarehouseIds.length > 0 && !mayTouch.some((id) => id && allowed.includes(id))) {
+            throw forbidden(sourceId ?? destinationId);
+          }
+        } else {
+          for (const id of docWarehouseIds) assignedCheckIds.add(id);
         }
         // No row → document does not exist; let the handler return 404.
       }
@@ -125,7 +150,7 @@ export function buScope(resource) {
       if (allowedBu != null && !allowedBu.includes(Number(buById.get(id)))) {
         throw forbidden(id);
       }
-      if (allowedWarehouses != null && !allowedWarehouses.includes(id)) {
+      if (allowedWarehouses != null && assignedCheckIds.has(id) && !allowedWarehouses.includes(id)) {
         throw forbidden(id);
       }
     }
