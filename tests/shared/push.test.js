@@ -110,13 +110,13 @@ describe('notifyRole — inbox recipients', () => {
 });
 
 describe('notifyAllWithRole / notifyWarehouseRoles / notifyStakeholders', () => {
-  it('notifyAllWithRole scopes the directory side by buId when given', async () => {
+  it('notifyAllWithRole scopes BOTH the token side and the directory side by buId when given', async () => {
     mocks.directory.findUserIdsForRole.mockResolvedValue([40]);
 
     await notifyAllWithRole(db, { role: 'owner', buId: 3, ...payload });
 
     expect(mocks.directory.findUserIdsForRole).toHaveBeenCalledWith(db, 'owner', 3);
-    expect(mocks.tokens.findTokensForRole).toHaveBeenCalledWith(db, 'owner');
+    expect(mocks.tokens.findTokensForRole).toHaveBeenCalledWith(db, 'owner', 3);
     expect(mocks.notifications.createForUsers).toHaveBeenCalledWith(db, [40], expect.any(Object));
   });
 
@@ -124,6 +124,7 @@ describe('notifyAllWithRole / notifyWarehouseRoles / notifyStakeholders', () => 
     await notifyAllWithRole(db, { role: 'owner', ...payload });
 
     expect(mocks.directory.findUserIdsForRole).toHaveBeenCalledWith(db, 'owner', null);
+    expect(mocks.tokens.findTokensForRole).toHaveBeenCalledWith(db, 'owner', null);
   });
 
   it('notifyWarehouseRoles resolves staff through the warehouse assignment on both sides', async () => {
@@ -155,6 +156,7 @@ describe('notifyAllWithRole / notifyWarehouseRoles / notifyStakeholders', () => 
     expect(mocks.directory.findUserIdsForRoleAndBu).toHaveBeenCalledWith(db, 'admin-bu', 3);
     expect(mocks.directory.findUserIdsForRoleAndBu).toHaveBeenCalledWith(db, 'purchasing', 3);
     expect(mocks.directory.findUserIdsForRole).toHaveBeenCalledWith(db, 'owner', 3);
+    expect(mocks.tokens.findTokensForRole).toHaveBeenCalledWith(db, 'owner', 3);
     expect(mocks.directory.findUserIdsForWarehouseStaff).toHaveBeenCalledWith(db, 9, ['admin-warehouse']);
   });
 });

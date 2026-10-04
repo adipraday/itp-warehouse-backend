@@ -1128,8 +1128,11 @@ request), jadi **user baru muncul sebagai penerima setelah request pertamanya** 
 yang terjadi sebelum itu tidak di-backfill. Push FCM tetap hanya ke device token. Satu user = satu
 baris per event walau cocok di kedua jalur / punya banyak device.
 
-Catatan scoping: untuk `owner`, jalur direktori hanya menarget owner yang token-nya mencakup BU event
-tersebut (`bu_ids`); jalur device-token lama untuk `owner` tetap role-wide (tidak berubah).
+Catatan scoping `owner`: baris inbox **dan** push FCM untuk event milik satu BU hanya menarget owner
+yang token terverifikasinya mencakup BU itu (`bu_ids` = semua BU company-nya) — owner company lain
+tidak ikut menerima. Sebelum 2026-10-05 jalur device-token owner role-wide (semua owner di semua
+company). Owner baru terhitung setelah request terautentikasi pertamanya ke API (device yang
+pemiliknya belum dikenal sengaja dikecualikan — batas tenant, fail-closed).
 
 ---
 

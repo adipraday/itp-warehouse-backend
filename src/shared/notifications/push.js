@@ -87,15 +87,17 @@ export async function notifyRole(db, { role, buId, title, body, data = {} }) {
 // For roles that aren't BU-scoped — notifies every registered device for
 // that role, regardless of bu_id.
 //
-// `buId` (optional) narrows ONLY the user_directory side to users whose token
-// covers that BU — an owner's token lists every BU of their own company, so
-// this keeps one company's owners out of another company's inbox. It does not
-// narrow the device-token side (tokens are stored with bu_id NULL for these
-// roles), which keeps its original notify-every-registered-device behaviour.
+// `buId` (optional) narrows BOTH the device-token side and the user_directory
+// side to users whose verified token covers that BU — an owner's token lists
+// every BU of their own company, so this keeps one company's owners (inbox AND
+// push) out of another company's events. Without a buId the role-wide
+// behaviour is unchanged. A device whose owner isn't in user_directory yet is
+// left out until their next authenticated request (see
+// device-tokens.repository.findTokensForRole).
 export async function notifyAllWithRole(db, { role, buId = null, title, body, data = {} }) {
   try {
     const [tokenRecipients, directoryUserIds] = await Promise.all([
-      deviceTokensRepository.findTokensForRole(db, role),
+      deviceTokensRepository.findTokensForRole(db, role, buId),
       lookupDirectory(() => userDirectoryRepository.findUserIdsForRole(db, role, buId))
     ]);
     await deliver(db, { tokenRecipients, directoryUserIds }, { title, body, data, type: data.type });

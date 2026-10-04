@@ -34,10 +34,30 @@ export async function findTokensForRoleAndBu(db, role, buId) {
   return rows;
 }
 
-// For a role that isn't BU-scoped (e.g. `owner`) — every device registered
-// under that role, regardless of bu_id.
-export async function findTokensForRole(db, role) {
-  const [rows] = await db.execute('SELECT user_id, fcm_token FROM device_tokens WHERE role = ?', [role]);
+// For a role that isn't BU-scoped (e.g. `owner`). Tokens of these roles are
+// stored with bu_id NULL, so the token row alone can't say which tenant a
+// device belongs to. Without a buId: every device registered under the role,
+// regardless of tenant (original behaviour, still used by callers that really
+// mean "everyone"). With a buId (an event that belongs to ONE business unit):
+// only devices whose owner's verified token covers that BU — resolved through
+// user_directory, which carries the JWT's bu_ids (an owner's = every BU of
+// their own company; NULL = the unrestricted claim) and a fresher role than
+// the denormalized one on the token row. A device whose user isn't in
+// user_directory yet is EXCLUDED (fail closed): this is a tenant boundary, so a
+// device we can't place must not receive another company's data. It joins the
+// audience on the owner's next authenticated request.
+export async function findTokensForRole(db, role, buId = null) {
+  if (buId == null) {
+    const [rows] = await db.execute('SELECT user_id, fcm_token FROM device_tokens WHERE role = ?', [role]);
+    return rows;
+  }
+  const [rows] = await db.execute(
+    `SELECT dt.user_id, dt.fcm_token
+     FROM device_tokens dt
+     JOIN user_directory ud ON ud.user_id = dt.user_id
+     WHERE dt.role = ? AND ud.role = ? AND (ud.bu_ids IS NULL OR JSON_CONTAINS(ud.bu_ids, ?))`,
+    [role, role, String(buId)]
+  );
   return rows;
 }
 
