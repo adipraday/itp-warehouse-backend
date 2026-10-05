@@ -14,7 +14,9 @@ export async function withIdempotency(connection, { key, endpoint, body, ttlHour
   }
 
   if (record.status === 'COMPLETED') {
-    return { replayed: true, statusCode: record.response_code, body: JSON.parse(record.response_body) };
+    // A string with the pool's jsonStrings; an object if mysql2 ever decodes the JSON column itself.
+    const body = typeof record.response_body === 'string' ? JSON.parse(record.response_body) : record.response_body;
+    return { replayed: true, statusCode: record.response_code, body };
   }
 
   const result = await work();

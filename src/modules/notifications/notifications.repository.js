@@ -1,8 +1,8 @@
 const COLUMNS = 'id, user_id, title, body, type, data, is_read, created_at';
 
 function parseRow(row) {
-  // mysql2 already decodes a JSON-typed column to a JS object — only
-  // JSON.parse it if it somehow comes back as a raw string.
+  // data is a JSON column: a string with the pool's jsonStrings, an object if
+  // mysql2 ever decodes it itself (MariaDB 10.5+ without jsonStrings).
   const data = typeof row.data === 'string' ? JSON.parse(row.data) : (row.data ?? null);
   return { ...row, is_read: Boolean(row.is_read), data };
 }

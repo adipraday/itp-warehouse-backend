@@ -80,7 +80,10 @@ function buildFilter({ userId, warehouseId, entityType, entityId, action, from, 
 const COLUMNS = 'id, user_id, warehouse_id, bu_id, action, entity_type, entity_id, method, endpoint, status_code, metadata, created_at';
 
 function parseRow(row) {
-  return { ...row, metadata: row.metadata ? JSON.parse(row.metadata) : null };
+  // metadata is a JSON column: a string with the pool's jsonStrings, an object
+  // if mysql2 ever decodes it itself (MariaDB 10.5+ without jsonStrings).
+  const metadata = typeof row.metadata === 'string' ? JSON.parse(row.metadata) : (row.metadata ?? null);
+  return { ...row, metadata };
 }
 
 export async function findAll(db, filter, { limit, offset }) {
