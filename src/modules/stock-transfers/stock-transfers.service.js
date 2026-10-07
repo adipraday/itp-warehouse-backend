@@ -128,9 +128,40 @@ export async function deleteStockTransfer(pool, id) {
   return { data: { id: Number(id) } };
 }
 
-export async function approveStockTransfer(pool, id, userId = null) {
+function forbidden(message) {
+  const error = new Error(message);
+  error.statusCode = 403;
+  error.code = 'FORBIDDEN';
+  return error;
+}
+
+// admin-warehouse may approve only a transfer that is INCOMING to a warehouse they are
+// assigned to (2026-10-07). Segregation of duty: the receiving side is the independent check, so
+//   - the destination must be one of their warehouses,
+//   - the source must NOT be (a transfer between two of their own warehouses is not "from
+//     another warehouse" — admin-bu approves those), and
+//   - they must not be the one who created it.
+// Any other role that reaches this point (admin-bu, super-admin) keeps its existing behaviour;
+// BU/warehouse scope for them was already enforced by buScope() on the route.
+export function assertMayApproveTransfer(transfer, context) {
+  if (context?.role !== 'admin-warehouse') return;
+
+  const assigned = (context.assignedWarehouseIds ?? []).map(Number);
+  if (!assigned.includes(Number(transfer.destination_warehouse_id))) {
+    throw forbidden('You may only approve a transfer sent to a warehouse you are assigned to');
+  }
+  if (assigned.includes(Number(transfer.source_warehouse_id))) {
+    throw forbidden('A transfer between two of your own warehouses must be approved by an admin-bu');
+  }
+  if (transfer.created_by != null && Number(transfer.created_by) === Number(context.userId)) {
+    throw forbidden('You cannot approve a transfer you created yourself');
+  }
+}
+
+export async function approveStockTransfer(pool, id, userId = null, context = null) {
   const existing = await repository.findById(pool, id);
   if (!existing) throw new NotFoundError(`Stock transfer ${id} not found`);
+  assertMayApproveTransfer(existing, context);
   if (existing.status !== 'DRAFT') {
     throw new ConflictError('INVALID_STATUS', 'Only a DRAFT stock transfer can be approved');
   }

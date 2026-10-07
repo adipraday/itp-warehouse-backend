@@ -14,7 +14,12 @@ import {
 
 const scope = buScope('stock-transfers');
 const write = { onRequest: guard('stock-transfers', 'write'), preValidation: scope };
-const approve = { onRequest: guard('stock-transfers', 'approve'), preValidation: scope };
+// The receiving warehouse's admin approves an incoming transfer, so approve (unlike every other
+// mutation here) is also reachable from the DESTINATION side — see buScope's allowDestinationWrite.
+const approve = {
+  onRequest: guard('stock-transfers', 'approve'),
+  preValidation: buScope('stock-transfers', { allowDestinationWrite: true })
+};
 const read = { preValidation: scope };
 
 export async function stockTransfersRoutes(app) {
@@ -51,7 +56,7 @@ export async function stockTransfersRoutes(app) {
   });
 
   app.post('/:id/approve', { ...approve, schema: approveStockTransferSchema }, async (request) => {
-    return service.approveStockTransfer(app.db, request.params.id, request.userContext?.userId);
+    return service.approveStockTransfer(app.db, request.params.id, request.userContext?.userId, request.userContext);
   });
 
   app.post('/:id/complete', { ...write, schema: completeStockTransferSchema }, async (request, reply) => {

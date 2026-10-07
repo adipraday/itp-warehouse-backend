@@ -71,6 +71,67 @@ describe('stock-transfers.service', () => {
     expect(result).toEqual({ data: { id: 1, transfer_number: 'TRF-000001' } });
   });
 
+  describe('approve by admin-warehouse on the receiving side (2026-10-07)', () => {
+    const incoming = { id: 7, status: 'DRAFT', source_warehouse_id: 22, destination_warehouse_id: 24, created_by: 5 };
+    const receiver = { userId: 9, role: 'admin-warehouse', assignedWarehouseIds: [24] };
+
+    it('approves an incoming DRAFT transfer for the admin of the destination warehouse', async () => {
+      repository.findById.mockResolvedValue(incoming);
+      repository.markApproved.mockResolvedValue();
+      repository.findByIdWithDetails.mockResolvedValue({ ...incoming, status: 'APPROVED' });
+
+      const result = await service.approveStockTransfer(fakePool, 7, 9, receiver);
+
+      expect(repository.markApproved).toHaveBeenCalledWith(fakePool, 7, 9);
+      expect(result.data.status).toBe('APPROVED');
+    });
+
+    it('rejects an admin-warehouse who is not assigned to the destination', async () => {
+      repository.findById.mockResolvedValue(incoming);
+
+      await expect(
+        service.approveStockTransfer(fakePool, 7, 9, { ...receiver, assignedWarehouseIds: [30] })
+      ).rejects.toMatchObject({ statusCode: 403, code: 'FORBIDDEN' });
+      expect(repository.markApproved).not.toHaveBeenCalled();
+    });
+
+    it('rejects the SENDING side approving its own outgoing transfer', async () => {
+      repository.findById.mockResolvedValue(incoming);
+
+      await expect(
+        service.approveStockTransfer(fakePool, 7, 9, { ...receiver, assignedWarehouseIds: [22] })
+      ).rejects.toMatchObject({ statusCode: 403 });
+    });
+
+    it('rejects when the admin is assigned to BOTH warehouses (admin-bu approves those)', async () => {
+      repository.findById.mockResolvedValue(incoming);
+
+      await expect(
+        service.approveStockTransfer(fakePool, 7, 9, { ...receiver, assignedWarehouseIds: [22, 24] })
+      ).rejects.toMatchObject({ statusCode: 403 });
+    });
+
+    it('rejects approving a transfer they created themselves', async () => {
+      repository.findById.mockResolvedValue({ ...incoming, created_by: 9 });
+
+      await expect(service.approveStockTransfer(fakePool, 7, 9, receiver)).rejects.toMatchObject({
+        statusCode: 403,
+        message: expect.stringContaining('created yourself')
+      });
+    });
+
+    it('does not restrict admin-bu / super-admin (no assignment context)', async () => {
+      repository.findById.mockResolvedValue(incoming);
+      repository.markApproved.mockResolvedValue();
+      repository.findByIdWithDetails.mockResolvedValue({ ...incoming, status: 'APPROVED' });
+
+      await expect(
+        service.approveStockTransfer(fakePool, 7, 3, { userId: 3, role: 'admin-bu', buIds: [11] })
+      ).resolves.toBeDefined();
+      await expect(service.approveStockTransfer(fakePool, 7, 3)).resolves.toBeDefined();
+    });
+  });
+
   it('approveStockTransfer rejects when the transfer is not DRAFT', async () => {
     repository.findById.mockResolvedValue({ id: 1, status: 'APPROVED' });
 

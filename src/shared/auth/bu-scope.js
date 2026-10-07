@@ -47,7 +47,12 @@ function forbidden(id) {
   return error;
 }
 
-export function buScope(resource) {
+// options.allowDestinationWrite (stock-transfers only): let a NON-GET request pass when the
+// caller is assigned to the transfer's DESTINATION warehouse instead of its source. Used only
+// by the approve route — the receiving side accepts an incoming transfer, while every other
+// change (edit/delete/cancel/complete) still needs the source side. The per-transfer rule on
+// top of this lives in stock-transfers.service.assertMayApproveTransfer().
+export function buScope(resource, { allowDestinationWrite = false } = {}) {
   return async function buScopePreValidation(request) {
     const ctx = request.userContext;
 
@@ -117,10 +122,12 @@ export function buScope(resource) {
         for (const id of docWarehouseIds) ids.add(id);
         if (isTransfer) {
           // Reading a transfer is allowed from either side of it; changing
-          // one (anything but GET) needs the SOURCE warehouse assigned.
+          // one (anything but GET) needs the SOURCE warehouse assigned —
+          // except the approve route (allowDestinationWrite), where either side will do.
           // Row keys are w1 (source) then w2 (destination).
           const [sourceId, destinationId] = [positiveInt(rows[0]?.w1), positiveInt(rows[0]?.w2)];
-          const mayTouch = request.method === 'GET' ? [sourceId, destinationId] : [sourceId];
+          const mayTouch =
+            request.method === 'GET' || allowDestinationWrite ? [sourceId, destinationId] : [sourceId];
           const allowed = assignedWarehouseIds == null ? null : assignedWarehouseIds.map(Number);
           if (allowed != null && docWarehouseIds.length > 0 && !mayTouch.some((id) => id && allowed.includes(id))) {
             throw forbidden(sourceId ?? destinationId);

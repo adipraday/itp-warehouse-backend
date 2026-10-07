@@ -258,6 +258,48 @@ describe('buScope()', () => {
     });
   });
 
+  describe('stock-transfers approve from the destination side (allowDestinationWrite)', () => {
+    const warehouses = [
+      { id: 22, bu_id: 11 },
+      { id: 24, bu_id: 11 },
+      { id: 30, bu_id: 12 }
+    ];
+    // Assigned to the DESTINATION (24) only; the transfer goes 22 -> 24.
+    const receiver = { userId: 2, role: 'admin-warehouse', buIds: [11], assignedWarehouseIds: [24] };
+    const docs = { stock_transfers: [{ id: 5, result: { w1: 22, w2: 24 } }] };
+    const post = (hook) =>
+      hook({ ...makeRequest({ userContext: receiver, params: { id: '5' }, db: makeDb({ warehouses, docs }) }), method: 'POST' });
+
+    it('lets the destination side through on the approve route', async () => {
+      await expect(post(buScope('stock-transfers', { allowDestinationWrite: true }))).resolves.toBeUndefined();
+    });
+
+    it('still blocks the destination side on every other mutation (default scope)', async () => {
+      await expect(post(buScope('stock-transfers'))).rejects.toMatchObject({ statusCode: 403 });
+    });
+
+    it('still blocks a user assigned to NEITHER side, even with allowDestinationWrite', async () => {
+      const stranger = { userId: 3, role: 'admin-warehouse', buIds: [11], assignedWarehouseIds: [30] };
+      await expect(
+        buScope('stock-transfers', { allowDestinationWrite: true })({
+          ...makeRequest({ userContext: stranger, params: { id: '5' }, db: makeDb({ warehouses, docs }) }),
+          method: 'POST'
+        })
+      ).rejects.toMatchObject({ statusCode: 403 });
+    });
+
+    it('does not widen the BU check: a destination in another BU is still rejected', async () => {
+      const crossBuDocs = { stock_transfers: [{ id: 6, result: { w1: 22, w2: 30 } }] };
+      const outsider = { userId: 2, role: 'admin-warehouse', buIds: [11], assignedWarehouseIds: [30] };
+      await expect(
+        buScope('stock-transfers', { allowDestinationWrite: true })({
+          ...makeRequest({ userContext: outsider, params: { id: '6' }, db: makeDb({ warehouses, docs: crossBuDocs }) }),
+          method: 'POST'
+        })
+      ).rejects.toMatchObject({ statusCode: 403 });
+    });
+  });
+
   it('passes when the warehouse belongs to the SECOND of several allowed business units (grant/owner)', async () => {
     const db = makeDb({ warehouses: [{ id: 23, bu_id: 12 }] });
     const hook = buScope('inbounds');

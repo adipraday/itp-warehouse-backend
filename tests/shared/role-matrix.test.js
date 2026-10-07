@@ -54,9 +54,11 @@ describe('HPP_VISIBLE_ROLES', () => {
 
 // admin-warehouse (2026-09-21, docs/user-warehouse-assignments.md): full
 // operational access confined to one warehouse via STAFF_ROLES — write on
-// everything a branch runs day-to-day, but never approve/reject, same
-// segregation-of-duty reasoning as staff-gudang.
-describe('admin-warehouse role (full write, no approve)', () => {
+// everything a branch runs day-to-day, but approve/reject stays admin-bu-only EXCEPT
+// stock-transfers approve (2026-10-07): the receiving warehouse admin accepts an
+// incoming transfer (the per-transfer 'incoming only, not your own' rule is enforced in
+// stock-transfers.service, see assertMayApproveTransfer).
+describe('admin-warehouse role (full write, approve only for stock-transfers)', () => {
   it('is declared in ROLES and can see HPP/profit data', () => {
     expect(ROLES).toContain('admin-warehouse');
     expect(HPP_VISIBLE_ROLES).toContain('admin-warehouse');
@@ -72,8 +74,11 @@ describe('admin-warehouse role (full write, no approve)', () => {
     }
   });
 
-  it('is denied approve/submit-gated sub-actions reserved for admin-bu', () => {
-    expect(can('admin-warehouse', 'stock-transfers', 'approve')).toBe(false);
+  it('may approve stock-transfers (receiving side) - the only approve it has', () => {
+    expect(can('admin-warehouse', 'stock-transfers', 'approve')).toBe(true);
+  });
+
+  it('is still denied the approve/reject sub-actions reserved for admin-bu', () => {
     expect(can('admin-warehouse', 'stock-opnames', 'approve')).toBe(false);
     expect(can('admin-warehouse', 'returns', 'approve')).toBe(false);
     expect(can('admin-warehouse', 'returns', 'reject')).toBe(false);

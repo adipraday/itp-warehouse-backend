@@ -1088,10 +1088,19 @@ Role ke-7. Bedanya sama role yang sudah ada:
   payment — **dan** bisa lihat data HPP/margin (`dashboard/profit`, `cost-summary`) buat
   warehouse-nya, yang mana staff-gudang/kasir-sales tidak bisa.
 - **Yang tetap TIDAK bisa** (sama seperti role staff lain, ini bukan bug): approve/reject
-  stock-transfer, stock-opname, return — tetap cuma `admin-bu`. Kalau UI menampilkan tombol
-  "Approve" berdasarkan role, jangan munculkan buat `admin-warehouse` walau dia yang bikin
-  pengajuannya. Juga tidak bisa bikin/edit warehouse baru atau assign staff (dua-duanya tetap
-  menu khusus `admin-bu`).
+  stock-opname dan return — tetap cuma `admin-bu`. Kalau UI menampilkan tombol "Approve"
+  berdasarkan role, jangan munculkan buat `admin-warehouse` walau dia yang bikin pengajuannya.
+  Juga tidak bisa bikin/edit warehouse baru atau assign staff (dua-duanya tetap menu khusus
+  `admin-bu`).
+- **Satu pengecualian — approve stock-transfer di sisi PENERIMA (2026-10-07):**
+  `POST /api/stock-transfers/:id/approve` sekarang boleh dipanggil `admin-warehouse`, tapi
+  hanya untuk transfer **masuk**: warehouse tujuan = salah satu warehouse yang dia pegang,
+  warehouse asal **bukan** warehouse yang dia pegang, dan dia **bukan pembuat** transfer-nya.
+  Selain itu `403 FORBIDDEN` (transfer antar dua warehouse miliknya sendiri tetap di-approve
+  `admin-bu`). `admin-bu`/`super-admin` tidak berubah. Aksi lain pada transfer (edit, hapus,
+  batalkan, complete) tetap butuh sisi **asal**; sisi tujuan cuma boleh baca + approve. Buat
+  UI: tombol Approve di sisi tujuan muncul kalau `status = DRAFT` dan aturan di atas terpenuhi
+  (warehouse yang dipegang user ada di `GET /api/me/access-status` → `warehouse_ids`).
 
 ⚠️ **Belum bisa dipakai user manapun sampai auth-backend juga menerima role ini** saat
 provisioning (lihat `docs/auth-multitenant-coordination.md` §12) — kalau frontend nyoba bikin

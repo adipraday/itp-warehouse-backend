@@ -28,10 +28,16 @@ export const ROLES = [
 // super-admin is allowed everywhere (short-circuited in can()).
 // admin-warehouse (2026-09-21) included deliberately: it gets write+submit on
 // every ALL_STAFF resource but — since approve/reject below are separate keys
-// that only ever list 'admin-bu' — never approve/reject, even on its own
-// warehouse's stock-opname/transfer/return. That's the point: a warehouse
-// admin can create the paperwork but can't also be the independent check on
-// it (segregation of duty), same reasoning as staff-gudang today.
+// that only list 'admin-bu' — never approve/reject a stock-opname or return,
+// even on its own warehouse. That's the point: a warehouse admin can create the
+// paperwork but can't also be the independent check on it (segregation of
+// duty), same reasoning as staff-gudang today.
+//
+// ONE exception (2026-10-07, requested): 'stock-transfers' approve also lists
+// 'admin-warehouse', so the receiving warehouse's admin can accept an INCOMING
+// transfer. This matrix only says the role may call the endpoint at all — the
+// "incoming only, never your own, never one you created" rule is enforced per
+// transfer in stock-transfers.service.assertMayApproveTransfer().
 const ALL_STAFF = ['admin-bu', 'admin-warehouse', 'staff-gudang'];
 
 // Narrow, deliberate exception to "reads stay open to every authenticated
@@ -63,7 +69,7 @@ const MATRIX = {
   inbounds: { write: [...ALL_STAFF, 'purchasing'] },
   outbounds: { write: [...ALL_STAFF, 'kasir-sales'] },
 
-  'stock-transfers': { write: ALL_STAFF, approve: ['admin-bu'] },
+  'stock-transfers': { write: ALL_STAFF, approve: ['admin-bu', 'admin-warehouse'] },
   'stock-opnames': { write: ALL_STAFF, submit: ALL_STAFF, approve: ['admin-bu'] },
   returns: { write: [...ALL_STAFF, 'kasir-sales'], approve: ['admin-bu'], reject: ['admin-bu'] },
 

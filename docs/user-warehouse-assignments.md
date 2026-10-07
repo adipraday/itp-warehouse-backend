@@ -90,11 +90,27 @@ block on zero assignments, `assignedWarehouseIds` filtering, the "not
 restricted" carve-out below) applies to it unchanged.
 
 The one deliberate limit: `admin-warehouse` gets `write`/`submit` on every
-resource above but **never `approve`/`reject`** (`role-matrix.js`) — those
-stay `admin-bu`-only, so the person who creates a stock-opname/transfer/return
-can never also be the one who approves it, even for their own warehouse. It
-also can't write `warehouses` or `user-warehouse-assignments` — those are
+resource above but **no `approve`/`reject`** (`role-matrix.js`) on stock-opnames
+and returns — those stay `admin-bu`-only, so the person who creates one can
+never also be the one who approves it, even for their own warehouse. It also
+can't write `warehouses` or `user-warehouse-assignments` — those are
 BU-structural decisions, not warehouse-operational ones.
+
+**Exception — stock-transfer approval on the receiving side (2026-10-07):**
+`admin-warehouse` may `approve` a stock-transfer, but only an **incoming** one,
+so the receiving warehouse is the independent check on the sender:
+- the transfer's **destination** is a warehouse they are assigned to,
+- its **source** is **not** one of their warehouses (a transfer between two of
+  their own warehouses still needs `admin-bu`), and
+- they are not the transfer's `created_by`.
+
+Anything else is `403 FORBIDDEN`. Mechanically: `role-matrix.js` lets the role
+call the endpoint, `buScope('stock-transfers', { allowDestinationWrite: true })`
+on the approve route lets the destination side through (every other mutation —
+edit/delete/cancel/complete — still requires the SOURCE side, and a destination
+outside the caller's BU is still rejected), and
+`stock-transfers.service.assertMayApproveTransfer()` applies the three rules
+above per transfer. `admin-bu`/`super-admin` are unaffected.
 
 **Cross-service note:** `role` is a validated enum on the auth-backend side
 (`docs/auth-backend-requirements.md`), not something warehouse-backend
