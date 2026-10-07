@@ -85,9 +85,19 @@ export async function createPayment(pool, payload, userId = null) {
     // server-side, never trust the client" convention as bu_id elsewhere.
     // null (no open session) is a normal case — e.g. finance settling a B2B
     // invoice has no register/shift involved at all.
-    const openSession = userId
-      ? await cashSessionsRepository.findOpenByUserAndWarehouse(connection, userId, invoice.warehouse_id)
-      : null;
+    //
+    // A PURCHASE payment is never tagged (2026-10-07): the cash-session
+    // reconciliation (cash-sessions.repository.sumCashBySession) treats every
+    // CASH payment on the shift as money coming IN to the drawer, but paying a
+    // supplier is money going OUT — tagging it inflated "expected cash" by the
+    // payment amount, so a close would compare the physical count against a
+    // number that includes cash that never entered the drawer (seen in
+    // production: session 6 included a Rp 965.000 supplier payment). Cash that
+    // really leaves the drawer for a supplier is a "Kas Keluar" expense instead.
+    const openSession =
+      userId && invoice.type !== 'PURCHASE'
+        ? await cashSessionsRepository.findOpenByUserAndWarehouse(connection, userId, invoice.warehouse_id)
+        : null;
 
     const paymentId = await repository.create(
       connection,

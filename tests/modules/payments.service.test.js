@@ -161,6 +161,33 @@ describe('payments.service', () => {
       expect(repository.create).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ cash_session_id: null }), 700);
     });
 
+    it('never tags a PURCHASE payment, even when the payer has an open session at that warehouse (cash out, not in)', async () => {
+      invoicesRepository.findByIdForUpdate.mockResolvedValue({ id: 14, type: 'PURCHASE', status: 'COMPLETED', total_amount: '965000.00', warehouse_id: 3 });
+      repository.sumByInvoiceId.mockResolvedValue(0);
+      cashSessionsRepository.findOpenByUserAndWarehouse.mockResolvedValue({ id: 6, warehouse_id: 3 });
+      repository.create.mockResolvedValue(1);
+      invoicesRepository.updatePaymentStatus.mockResolvedValue();
+      repository.findById.mockResolvedValue({ id: 1, cash_session_id: null });
+
+      await service.createPayment(fakePool, { invoice_id: 14, amount: 965000, payment_method: 'CASH', payment_date: '2026-09-22' }, 7);
+
+      expect(cashSessionsRepository.findOpenByUserAndWarehouse).not.toHaveBeenCalled();
+      expect(repository.create).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ cash_session_id: null }), 7);
+    });
+
+    it('still tags a SALES payment with the open session', async () => {
+      invoicesRepository.findByIdForUpdate.mockResolvedValue({ id: 2, type: 'SALES', status: 'COMPLETED', total_amount: '100000.00', warehouse_id: 3 });
+      repository.sumByInvoiceId.mockResolvedValue(0);
+      cashSessionsRepository.findOpenByUserAndWarehouse.mockResolvedValue({ id: 42, warehouse_id: 3 });
+      repository.create.mockResolvedValue(1);
+      invoicesRepository.updatePaymentStatus.mockResolvedValue();
+      repository.findById.mockResolvedValue({ id: 1, cash_session_id: 42 });
+
+      await service.createPayment(fakePool, { invoice_id: 2, amount: 40000, payment_method: 'CASH', payment_date: '2026-08-25' }, 501);
+
+      expect(repository.create).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ cash_session_id: 42 }), 501);
+    });
+
     it('never looks up a session when there is no identity (userId undefined) — legacy/no-auth callers', async () => {
       invoicesRepository.findByIdForUpdate.mockResolvedValue({ id: 1, status: 'COMPLETED', total_amount: '100000.00', warehouse_id: 3 });
       repository.sumByInvoiceId.mockResolvedValue(0);
