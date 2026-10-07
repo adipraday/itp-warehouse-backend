@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as repository from '../../src/modules/warehouses/warehouses.repository.js';
 import * as businessUnitsClient from '../../src/shared/auth/business-units-client.js';
+import * as businessUnitResolver from '../../src/shared/auth/business-unit-resolver.js';
 import * as service from '../../src/modules/warehouses/warehouses.service.js';
 
 vi.mock('../../src/modules/warehouses/warehouses.repository.js');
 vi.mock('../../src/shared/auth/business-units-client.js');
+vi.mock('../../src/shared/auth/business-unit-resolver.js');
 
 const fakeDb = {};
 const fakeConfig = { AUTH_API_URL: 'http://auth.test', SERVICE_API_KEY: 'test-key' };
@@ -39,6 +41,40 @@ describe('warehouses.service', () => {
       statusCode: 404,
       code: 'NOT_FOUND'
     });
+  });
+
+  it('getWarehouse without config returns the bare row (no business_unit lookup)', async () => {
+    repository.findById.mockResolvedValue({ id: 3, name: 'Cabang 1', bu_id: 1 });
+
+    const result = await service.getWarehouse(fakeDb, 3);
+
+    expect(result).toEqual({ data: { id: 3, name: 'Cabang 1', bu_id: 1 } });
+    expect(businessUnitResolver.resolveBusinessUnit).not.toHaveBeenCalled();
+  });
+
+  it('getWarehouse with config adds the resolved business_unit (letterhead title)', async () => {
+    repository.findById.mockResolvedValue({ id: 3, name: 'Cabang 1', bu_id: 1 });
+    businessUnitResolver.resolveBusinessUnit.mockResolvedValue({ id: 1, name: 'Sawah Dangka Mart' });
+
+    const result = await service.getWarehouse(fakeDb, 3, fakeConfig);
+
+    expect(businessUnitResolver.resolveBusinessUnit).toHaveBeenCalledWith(fakeConfig, 1);
+    expect(result.data).toEqual({
+      id: 3,
+      name: 'Cabang 1',
+      bu_id: 1,
+      business_unit: { id: 1, name: 'Sawah Dangka Mart' }
+    });
+  });
+
+  it('getWarehouse still returns the warehouse with business_unit null when the name is unresolvable', async () => {
+    repository.findById.mockResolvedValue({ id: 3, name: 'Cabang 1', bu_id: null });
+    businessUnitResolver.resolveBusinessUnit.mockResolvedValue(null);
+
+    const result = await service.getWarehouse(fakeDb, 3, fakeConfig);
+
+    expect(result.data.business_unit).toBeNull();
+    expect(result.data.name).toBe('Cabang 1');
   });
 
   it('createWarehouse throws a 409 ConflictError when the code is already used', async () => {

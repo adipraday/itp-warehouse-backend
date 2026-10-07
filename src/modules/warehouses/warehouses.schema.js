@@ -117,11 +117,22 @@ export const listWarehousesSchema = {
   }
 };
 
+// Single read only: also carries the resolved business unit (null = unknown / not
+// resolvable right now) — used as the printed-document letterhead title.
+const warehouseWithBusinessUnitProperties = {
+  ...warehouseProperties,
+  business_unit: {
+    type: 'object',
+    nullable: true,
+    properties: { id: { type: 'integer' }, name: { type: 'string' } }
+  }
+};
+
 export const getWarehouseSchema = {
   tags: ['warehouses'],
   params: idParams,
   response: {
-    200: { type: 'object', properties: { data: { type: 'object', properties: warehouseProperties } } },
+    200: { type: 'object', properties: { data: { type: 'object', properties: warehouseWithBusinessUnitProperties } } },
     404: errorResponse
   }
 };

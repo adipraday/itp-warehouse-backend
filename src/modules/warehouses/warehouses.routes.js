@@ -51,7 +51,7 @@ export async function warehousesRoutes(app) {
   });
 
   app.get('/:id', { ...scopedRead, schema: getWarehouseSchema }, async (request) => {
-    return service.getWarehouse(app.db, request.params.id);
+    return service.getWarehouse(app.db, request.params.id, app.config);
   });
 
   // Auto-provisioning (2026-09-08): "ensure this BU has a main warehouse" —

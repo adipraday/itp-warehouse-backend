@@ -1,6 +1,7 @@
 import { NotFoundError, ConflictError, BadRequestError } from '../../shared/errors/app-error.js';
 import { parsePagination } from '../../shared/utils/pagination.js';
 import { assertBusinessUnitIsUsable, getBusinessUnitById } from '../../shared/auth/business-units-client.js';
+import { resolveBusinessUnit } from '../../shared/auth/business-unit-resolver.js';
 import * as repository from './warehouses.repository.js';
 
 const FK_VIOLATION_CODES = new Set(['ER_ROW_IS_REFERENCED_2', 'ER_ROW_IS_REFERENCED']);
@@ -77,10 +78,15 @@ export async function listWarehouses(db, query, buIds = null, assignedWarehouseI
   return { data, meta: { page, per_page, total } };
 }
 
-export async function getWarehouse(db, id) {
+// `config` (optional) adds `business_unit: {id, name} | null` — the name the
+// frontend prints as the letterhead title above the warehouse name (it can't
+// look it up itself, see shared/auth/business-unit-resolver.js). Omitted when
+// no config is passed, so callers that only need the row are unchanged.
+export async function getWarehouse(db, id, config = null) {
   const warehouse = await repository.findById(db, id);
   if (!warehouse) throw new NotFoundError(`Warehouse ${id} not found`);
-  return { data: warehouse };
+  if (!config) return { data: warehouse };
+  return { data: { ...warehouse, business_unit: await resolveBusinessUnit(config, warehouse.bu_id) } };
 }
 
 export async function createWarehouse(db, payload, userId = null, config = null) {
