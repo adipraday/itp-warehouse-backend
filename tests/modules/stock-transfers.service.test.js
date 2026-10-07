@@ -5,9 +5,11 @@ import * as stockMutationsRepository from '../../src/modules/inventory/stock-mut
 import * as costLayersRepository from '../../src/modules/inventory/costing/cost-layers.repository.js';
 import * as costAllocationsRepository from '../../src/modules/inventory/costing/cost-allocations.repository.js';
 import * as idempotencyRepository from '../../src/shared/idempotency/idempotency.repository.js';
+import * as push from '../../src/shared/notifications/push.js';
 import * as service from '../../src/modules/stock-transfers/stock-transfers.service.js';
 
 vi.mock('../../src/modules/stock-transfers/stock-transfers.repository.js');
+vi.mock('../../src/shared/notifications/push.js');
 vi.mock('../../src/modules/inventory/stocks/stocks.repository.js');
 vi.mock('../../src/modules/inventory/stock-mutations/stock-mutations.repository.js');
 vi.mock('../../src/modules/inventory/costing/cost-layers.repository.js');
@@ -117,6 +119,64 @@ describe('stock-transfers.service', () => {
       await expect(service.approveStockTransfer(fakePool, 7, 9, receiver)).rejects.toMatchObject({
         statusCode: 403,
         message: expect.stringContaining('created yourself')
+      });
+    });
+
+    describe('approval notification to the sending side', () => {
+      const approvedRow = { ...incoming, status: 'APPROVED', transfer_number: 'TRF-000007' };
+
+      it('tells the source warehouse admin-warehouse + staff-gudang it is ready to complete (deep-links to the transfer)', async () => {
+        repository.findById.mockResolvedValue(incoming);
+        repository.markApproved.mockResolvedValue();
+        repository.findByIdWithDetails.mockResolvedValue(approvedRow);
+
+        await service.approveStockTransfer(fakePool, 7, 9, receiver);
+
+        expect(push.notifyWarehouseRoles).toHaveBeenCalledTimes(1);
+        expect(push.notifyWarehouseRoles).toHaveBeenCalledWith(fakePool, {
+          warehouseId: 22,
+          roles: ['admin-warehouse', 'staff-gudang'],
+          title: 'Transfer Stok Disetujui',
+          body: 'TRF-000007 sudah disetujui dan siap diselesaikan.',
+          data: { type: 'stock_transfer', id: 7 }
+        });
+      });
+
+      it('notifies the same way when an admin-bu approves', async () => {
+        repository.findById.mockResolvedValue(incoming);
+        repository.markApproved.mockResolvedValue();
+        repository.findByIdWithDetails.mockResolvedValue(approvedRow);
+
+        await service.approveStockTransfer(fakePool, 7, 3, { userId: 3, role: 'admin-bu', buIds: [11] });
+
+        expect(push.notifyWarehouseRoles).toHaveBeenCalledWith(
+          fakePool,
+          expect.objectContaining({ warehouseId: 22, data: { type: 'stock_transfer', id: 7 } })
+        );
+      });
+
+      it('never fails the approval if the notification throws', async () => {
+        repository.findById.mockResolvedValue(incoming);
+        repository.markApproved.mockResolvedValue();
+        repository.findByIdWithDetails.mockResolvedValue(approvedRow);
+        push.notifyWarehouseRoles.mockRejectedValue(new Error('fcm down'));
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+        const result = await service.approveStockTransfer(fakePool, 7, 9, receiver);
+
+        expect(result.data.status).toBe('APPROVED');
+      });
+
+      it('sends nothing when the approval is refused or the transfer is not a DRAFT', async () => {
+        repository.findById.mockResolvedValue(incoming);
+        await expect(
+          service.approveStockTransfer(fakePool, 7, 9, { ...receiver, assignedWarehouseIds: [30] })
+        ).rejects.toMatchObject({ statusCode: 403 });
+
+        repository.findById.mockResolvedValue({ ...incoming, status: 'APPROVED' });
+        await expect(service.approveStockTransfer(fakePool, 7, 9, receiver)).rejects.toMatchObject({ statusCode: 409 });
+
+        expect(push.notifyWarehouseRoles).not.toHaveBeenCalled();
       });
     });
 

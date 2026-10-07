@@ -1112,7 +1112,9 @@ validasi role tidak dikenal.
 ## 29. Inbox notifikasi in-app (2026-10-05)
 
 Setiap event yang memicu push FCM (sale/inbound/outbound selesai, return, stock opname & transfer
-diajukan, pembayaran pembelian, stok menipis/habis, selisih kas sesi kasir) **juga dicatat sebagai
+diajukan, **transfer disetujui — dikirim ke admin-warehouse + staff-gudang warehouse ASAL supaya
+mereka tahu sudah siap di-complete (2026-10-07; `data.type = stock_transfer`, `data.id` = id
+transfer)**, pembayaran pembelian, stok menipis/habis, selisih kas sesi kasir) **juga dicatat sebagai
 baris inbox per user penerima**. Endpoint — semua self-scoped ke user yang login, tanpa gating role:
 
 ```

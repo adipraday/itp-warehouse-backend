@@ -168,6 +168,23 @@ export async function approveStockTransfer(pool, id, userId = null, context = nu
 
   await repository.markApproved(pool, id, userId);
   const approved = await repository.findByIdWithDetails(pool, id);
+
+  // The sending side is who has to act next (complete = the stock actually moves), and whoever
+  // approved is usually someone else (admin-bu, or the receiving warehouse's admin) — so tell the
+  // source warehouse's staff it is ready (2026-10-07). Best-effort: never fails an approval that
+  // already committed.
+  try {
+    await notifyWarehouseRoles(pool, {
+      warehouseId: approved.source_warehouse_id,
+      roles: ['admin-warehouse', 'staff-gudang'],
+      title: 'Transfer Stok Disetujui',
+      body: `${approved.transfer_number} sudah disetujui dan siap diselesaikan.`,
+      data: { type: 'stock_transfer', id: approved.id }
+    });
+  } catch (error) {
+    console.warn('[push] stock-transfer approve notification failed', { id, error: error.message });
+  }
+
   return { data: approved };
 }
 
