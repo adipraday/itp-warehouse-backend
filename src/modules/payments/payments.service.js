@@ -128,8 +128,8 @@ export async function createPayment(pool, payload, userId = null) {
         includeOwner: true,
         warehouseId: paidInvoice.warehouse_id,
         warehouseRoles: ['admin-warehouse'],
-        title: 'Pembayaran Pembelian Diterima',
-        body: `Pembayaran ${formattedAmount} untuk ${paidInvoice.invoice_number} tercatat.`,
+        title: 'Pembayaran ke Supplier Dicatat',
+        body: `${formattedAmount} sudah dibayarkan untuk pembelian ${paidInvoice.invoice_number}.`,
         data: { type: 'purchase_payment', id: created.id, invoice_id: paidInvoice.id }
       });
     } catch (error) {
