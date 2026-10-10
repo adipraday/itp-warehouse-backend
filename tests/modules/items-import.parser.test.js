@@ -54,6 +54,23 @@ describe('parseImportFile — CSV', () => {
 });
 
 describe('parseImportFile — XLSX', () => {
+  it('reads hyperlink, rich-text and formula cells as their visible value, not "[object Object]"', async () => {
+    // Google Sheets auto-links text like a warehouse code when exporting to .xlsx.
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Items');
+    sheet.addRow(['sku', 'name', 'unit', 'warehouse_code', 'quantity']);
+    sheet.addRow(['SKU-1', 'Router', 'pcs', { text: 'itp-gc-03', hyperlink: 'https://example.com/itp-gc-03' }, { formula: '2+3', result: 5 }]);
+    sheet.addRow(['SKU-2', 'Switch', 'pcs', { richText: [{ text: 'itp-' }, { text: 'gc-03' }] }, 7]);
+    const buffer = await workbook.xlsx.writeBuffer();
+
+    const rows = await parseImportFile(buffer, { filename: 'items.xlsx' });
+
+    expect(rows).toEqual([
+      { sku: 'SKU-1', name: 'Router', unit: 'pcs', warehouse_code: 'itp-gc-03', quantity: 5 },
+      { sku: 'SKU-2', name: 'Switch', unit: 'pcs', warehouse_code: 'itp-gc-03', quantity: 7 }
+    ]);
+  });
+
   it('parses a well-formed .xlsx workbook into row objects', async () => {
     const buffer = await xlsxBuffer(
       ['sku', 'name', 'unit', 'quantity'],

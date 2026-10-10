@@ -28,6 +28,19 @@ function isXlsxFile(filename, mimetype) {
   return mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 }
 
+// exceljs returns non-plain cells as objects: hyperlinks ({ text, hyperlink } — Google
+// Sheets auto-links text like a warehouse code on export), rich text ({ richText }), formulas
+// ({ formula, result }) and error cells ({ error }). Left alone these stringify to
+// "[object Object]" downstream, so reduce each to the value the user actually sees.
+function cellToPrimitive(value) {
+  if (value == null || typeof value !== 'object' || value instanceof Date) return value;
+  if (Array.isArray(value.richText)) return value.richText.map((part) => part.text).join('');
+  if ('result' in value) return cellToPrimitive(value.result);
+  if ('text' in value) return cellToPrimitive(value.text);
+  if ('error' in value) return value.error;
+  return value;
+}
+
 async function parseXlsx(buffer) {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(buffer);
@@ -39,7 +52,7 @@ async function parseXlsx(buffer) {
   worksheet.eachRow((row, rowNumber) => {
     // exceljs's row.values is 1-indexed (values[0] is always undefined) —
     // slice it off so column 1 in the file lines up with array index 0.
-    const values = row.values.slice(1);
+    const values = row.values.slice(1).map(cellToPrimitive);
     if (rowNumber === 1) {
       headers = values.map(normalizeHeader);
       return;
