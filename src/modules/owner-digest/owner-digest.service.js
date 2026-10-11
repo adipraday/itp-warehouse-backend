@@ -3,6 +3,7 @@ import { notifyUsers } from '../../shared/notifications/push.js';
 import * as userDirectoryRepository from '../user-directory/user-directory.repository.js';
 import * as ownerInsights from '../dashboard/owner-insights.service.js';
 import * as stuckQueue from '../dashboard/stuck-queue.service.js';
+import * as unusualActivity from '../dashboard/unusual-activity.service.js';
 import * as repository from './owner-digest.repository.js';
 
 // A digest is only worth sending as a morning briefing. If the app was down at the configured
@@ -26,7 +27,7 @@ function dateLabel(isoDate) {
 
 // Pure: turns one day's branch-comparison + cash-variance numbers into the notification text.
 // Only parts that carry information are included, so a quiet day stays short.
-export function formatDigest({ date, branches, cash, stuck = null }) {
+export function formatDigest({ date, branches, cash, stuck = null, unusual = null }) {
   const { totals, branches: rows } = branches;
   const sentences = [];
 
@@ -61,6 +62,10 @@ export function formatDigest({ date, branches, cash, stuck = null }) {
     sentences.push(`${stuck.total} dokumen menunggu ${stuck.min_age_days} hari atau lebih.`);
   }
 
+  if (unusual && unusual.findings > 0) {
+    sentences.push(`${unusual.findings} aktivitas tidak biasa dalam ${unusual.days} hari terakhir perlu dicek.`);
+  }
+
   const stock = [];
   if (totals.out_of_stock_count > 0) stock.push(`${totals.out_of_stock_count} habis`);
   if (totals.low_stock_count > 0) stock.push(`${totals.low_stock_count} menipis`);
@@ -78,17 +83,20 @@ export function formatDigest({ date, branches, cash, stuck = null }) {
 // warehouse in scope (nothing to report).
 export async function buildDigest(db, { buIds, date }) {
   const period = { from: date, to: date };
-  const [branches, cash, queue] = await Promise.all([
+  const [branches, cash, queue, activity] = await Promise.all([
     ownerInsights.getBranchComparison(db, period, buIds, null),
     ownerInsights.getCashVariance(db, period, buIds, null),
-    stuckQueue.getStuckQueue(db, { limit: 1 }, buIds, null)
+    stuckQueue.getStuckQueue(db, { limit: 1 }, buIds, null),
+    // The last 7 days up to and including the digest day.
+    unusualActivity.getUnusualActivity(db, { from: addDays(date, -6), to: date }, buIds, null)
   ]);
   if (branches.data.branches.length === 0) return null;
   return formatDigest({
     date,
     branches: branches.data,
     cash: cash.data,
-    stuck: { total: queue.data.summary.total, min_age_days: queue.data.min_age_days }
+    stuck: { total: queue.data.summary.total, min_age_days: queue.data.min_age_days },
+    unusual: { findings: activity.data.summary.findings, days: 7 }
   });
 }
 

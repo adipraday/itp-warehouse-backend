@@ -289,3 +289,62 @@ export const agingSchema = {
     }
   }
 };
+
+export const unusualActivitySchema = {
+  tags: ['dashboard'],
+  querystring: { type: 'object', properties: periodQuerystring },
+  response: {
+    200: {
+      type: 'object',
+      properties: {
+        data: {
+          type: 'object',
+          properties: {
+            period: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } } },
+            thresholds: { type: 'object', additionalProperties: { type: 'integer' } },
+            summary: {
+              type: 'object',
+              properties: {
+                findings: { type: 'integer' },
+                flagged_users: { type: 'integer' },
+                high_severity: { type: 'integer' },
+                by_type: { type: 'object', additionalProperties: { type: 'integer' } },
+                row_limit_reached: { type: 'boolean' }
+              }
+            },
+            findings: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  type: { type: 'string' },
+                  user_id: { type: 'integer' },
+                  count: { type: 'integer' },
+                  severity: { type: 'string', enum: ['medium', 'high'] },
+                  warehouse_id: { type: ['integer', 'null'] },
+                  first_at: { type: 'string' },
+                  last_at: { type: 'string' },
+                  documents_created: { type: ['integer', 'null'] },
+                  cancel_rate_pct: { type: ['number', 'null'] },
+                  examples: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        action: { type: 'string' },
+                        entity_type: { type: 'string' },
+                        entity_id: { type: ['integer', 'null'] },
+                        warehouse_id: { type: ['integer', 'null'] },
+                        at: { type: 'string' }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+};

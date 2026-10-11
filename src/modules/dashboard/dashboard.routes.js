@@ -5,7 +5,14 @@ import * as service from './dashboard.service.js';
 import * as ownerInsights from './owner-insights.service.js';
 import * as stuckQueue from './stuck-queue.service.js';
 import * as aging from './aging.service.js';
-import { agingSchema, branchComparisonSchema, cashVarianceSchema, stuckQueueSchema } from './owner-insights.schema.js';
+import * as unusualActivity from './unusual-activity.service.js';
+import {
+  agingSchema,
+  branchComparisonSchema,
+  cashVarianceSchema,
+  stuckQueueSchema,
+  unusualActivitySchema
+} from './owner-insights.schema.js';
 import {
   dashboardSummarySchema,
   dashboardStockSchema,
@@ -73,6 +80,19 @@ export async function dashboardRoutes(app) {
     { onRequest: overseerGuard, preValidation: scope, schema: branchComparisonSchema },
     async (request) => {
       return ownerInsights.getBranchComparison(
+        app.db,
+        request.query,
+        request.userContext?.buIds,
+        request.userContext?.assignedWarehouseIds
+      );
+    }
+  );
+
+  app.get(
+    '/unusual-activity',
+    { onRequest: overseerGuard, preValidation: scope, schema: unusualActivitySchema },
+    async (request) => {
+      return unusualActivity.getUnusualActivity(
         app.db,
         request.query,
         request.userContext?.buIds,

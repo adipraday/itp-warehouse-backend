@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as userDirectory from '../../src/modules/user-directory/user-directory.repository.js';
 import * as ownerInsights from '../../src/modules/dashboard/owner-insights.service.js';
 import * as stuckQueue from '../../src/modules/dashboard/stuck-queue.service.js';
+import * as unusualActivity from '../../src/modules/dashboard/unusual-activity.service.js';
 import * as repository from '../../src/modules/owner-digest/owner-digest.repository.js';
 import * as push from '../../src/shared/notifications/push.js';
 import * as service from '../../src/modules/owner-digest/owner-digest.service.js';
@@ -10,6 +11,7 @@ import { addDays, businessDate, businessHour } from '../../src/shared/utils/busi
 vi.mock('../../src/modules/user-directory/user-directory.repository.js');
 vi.mock('../../src/modules/dashboard/owner-insights.service.js');
 vi.mock('../../src/modules/dashboard/stuck-queue.service.js');
+vi.mock('../../src/modules/dashboard/unusual-activity.service.js');
 vi.mock('../../src/modules/owner-digest/owner-digest.repository.js');
 vi.mock('../../src/shared/notifications/push.js');
 
@@ -66,7 +68,8 @@ describe('formatDigest', () => {
         ]
       },
       cash: { summary: cashSummary({ sessions_with_variance: 1, total_shortage: '50000.00', overdue_open_count: 2 }) },
-      stuck: { total: 4, min_age_days: 2 }
+      stuck: { total: 4, min_age_days: 2 },
+      unusual: { findings: 2, days: 7 }
     });
 
     expect(digest.title).toBe('Ringkasan 11 Okt 2026');
@@ -77,6 +80,7 @@ describe('formatDigest', () => {
     expect(digest.body).toContain('Kas: 1 sesi berselisih (kurang Rp 50.000).');
     expect(digest.body).toContain('2 sesi kasir belum ditutup lebih dari 24 jam.');
     expect(digest.body).toContain('4 dokumen menunggu 2 hari atau lebih.');
+    expect(digest.body).toContain('2 aktivitas tidak biasa dalam 7 hari terakhir perlu dicek.');
     expect(digest.body).toContain('Stok: 3 habis, 5 menipis.');
   });
 
@@ -129,6 +133,7 @@ describe('runOwnerDigest', () => {
     });
     ownerInsights.getCashVariance.mockResolvedValue({ data: { summary: cashSummary() } });
     stuckQueue.getStuckQueue.mockResolvedValue({ data: { min_age_days: 2, summary: { total: 0 } } });
+    unusualActivity.getUnusualActivity.mockResolvedValue({ data: { summary: { findings: 0 } } });
     push.notifyUsers.mockResolvedValue();
   });
 
