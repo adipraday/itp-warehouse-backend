@@ -4,7 +4,8 @@ import { HPP_VISIBLE_ROLES } from '../../shared/auth/role-matrix.js';
 import * as service from './dashboard.service.js';
 import * as ownerInsights from './owner-insights.service.js';
 import * as stuckQueue from './stuck-queue.service.js';
-import { branchComparisonSchema, cashVarianceSchema, stuckQueueSchema } from './owner-insights.schema.js';
+import * as aging from './aging.service.js';
+import { agingSchema, branchComparisonSchema, cashVarianceSchema, stuckQueueSchema } from './owner-insights.schema.js';
 import {
   dashboardSummarySchema,
   dashboardStockSchema,
@@ -79,6 +80,15 @@ export async function dashboardRoutes(app) {
       );
     }
   );
+
+  app.get('/aging', { onRequest: overseerGuard, preValidation: scope, schema: agingSchema }, async (request) => {
+    return aging.getAging(
+      app.db,
+      request.query,
+      request.userContext?.buIds,
+      request.userContext?.assignedWarehouseIds
+    );
+  });
 
   app.get(
     '/stuck-queue',

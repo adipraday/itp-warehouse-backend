@@ -202,3 +202,90 @@ export const stuckQueueSchema = {
     }
   }
 };
+
+export const agingSchema = {
+  tags: ['dashboard'],
+  querystring: {
+    type: 'object',
+    required: ['side'],
+    properties: {
+      side: { type: 'string', enum: ['receivable', 'payable'] },
+      warehouse_id: { type: 'integer' },
+      limit: { type: 'integer', minimum: 1, maximum: 200 }
+    }
+  },
+  response: {
+    200: {
+      type: 'object',
+      properties: {
+        data: {
+          type: 'object',
+          properties: {
+            side: { type: 'string' },
+            as_of: { type: 'string' },
+            total_outstanding: { type: 'string' },
+            invoice_count: { type: 'integer' },
+            overdue_total: { type: 'string' },
+            overdue_count: { type: 'integer' },
+            buckets: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  key: { type: 'string' },
+                  label: { type: 'string' },
+                  count: { type: 'integer' },
+                  amount: { type: 'string' }
+                }
+              }
+            },
+            by_contact: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  contact_id: { type: ['integer', 'null'] },
+                  contact_name: { type: ['string', 'null'] },
+                  count: { type: 'integer' },
+                  amount: { type: 'string' },
+                  oldest_days_overdue: { type: 'integer' }
+                }
+              }
+            },
+            by_warehouse: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  warehouse_id: { type: 'integer' },
+                  count: { type: 'integer' },
+                  amount: { type: 'string' }
+                }
+              }
+            },
+            items: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  invoice_id: { type: 'integer' },
+                  invoice_number: { type: 'string' },
+                  warehouse_id: { type: 'integer' },
+                  contact_id: { type: ['integer', 'null'] },
+                  contact_name: { type: ['string', 'null'] },
+                  invoice_date: { type: 'string' },
+                  due_date: { type: ['string', 'null'] },
+                  total_amount: { type: 'string' },
+                  paid_amount: { type: 'string' },
+                  outstanding: { type: 'string' },
+                  days_overdue: { type: 'integer' }
+                }
+              }
+            },
+            truncated: { type: 'boolean' }
+          }
+        }
+      }
+    }
+  }
+};
