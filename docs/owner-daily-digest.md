@@ -1,7 +1,7 @@
-# Ringkasan harian owner (2026-10-12)
+# Ringkasan harian owner dan admin-bu (2026-10-12)
 
-Setiap pagi tiap **owner** menerima satu notifikasi (inbox + push FCM ke perangkat yang terdaftar) berisi ringkasan
-**kemarin** (hari bisnis WIB) untuk semua BU di perusahaannya. Tipe notifikasi: `owner_digest`,
+Setiap pagi tiap **owner** dan tiap **admin-bu** menerima satu notifikasi (inbox + push FCM ke perangkat yang terdaftar) berisi ringkasan
+**kemarin** (hari bisnis WIB) untuk BU yang boleh dilihatnya (owner: semua BU perusahaannya; admin-bu: BU-nya beserta grant). Tipe notifikasi: `owner_digest`,
 `data = { type: 'owner_digest', date: 'YYYY-MM-DD' }`. Di web, klik notifikasi membuka `/branch-comparison`.
 
 ## Isi
@@ -44,5 +44,5 @@ Pantauan selisih kas ikut dikelompokkan per hari WIB (`CONVERT_TZ(closed_at, '+0
 ## Batasan yang diketahui
 
 - Belum ada pengaturan per-owner untuk berhenti berlangganan (hanya saklar global lewat env).
-- Hanya role `owner`; admin-bu belum menerima ringkasan.
+- Hanya role `owner` dan `admin-bu`; admin-warehouse dan staf belum menerima ringkasan.
 - Stok kritis adalah kondisi saat dikirim, bukan akhir hari kemarin.

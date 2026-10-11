@@ -8,6 +8,10 @@ import * as repository from './owner-digest.repository.js';
 // hour it is still sent when it comes back, but not late in the evening about "yesterday".
 const LATEST_SEND_HOUR = 21;
 
+// Who gets a digest: every owner, and every admin-bu. Each is scoped to the business units their own
+// verified token covers, so an admin-bu only ever sees their own BU(s).
+const DIGEST_ROLES = ['owner', 'admin-bu'];
+
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
 
 function rupiah(value) {
@@ -64,8 +68,8 @@ export function formatDigest({ date, branches, cash }) {
   };
 }
 
-// Builds the digest for one owner: everything is scoped to that owner's own business units, so one
-// company's numbers never reach another company's owner. Returns null when the owner has no
+// Builds the digest for one recipient: everything is scoped to that person's own business units, so
+// one company's numbers never reach another company's people. Returns null when they have no
 // warehouse in scope (nothing to report).
 export async function buildDigest(db, { buIds, date }) {
   const period = { from: date, to: date };
@@ -85,12 +89,14 @@ export async function runOwnerDigest(db, { now = new Date(), sendHour = 7, log =
   if (hour < sendHour || hour >= LATEST_SEND_HOUR) return 0;
 
   const date = addDays(businessDate(now), -1); // the day being summarised: yesterday (WIB)
-  const owners = await userDirectoryRepository.findUsersByRole(db, 'owner');
+  const recipients = (
+    await Promise.all(DIGEST_ROLES.map((role) => userDirectoryRepository.findUsersByRole(db, role)))
+  ).flat();
   let sent = 0;
 
-  for (const owner of owners) {
-    // buIds null would mean "unrestricted" and is never an owner's real scope; an owner without a
-    // BU list (or with an empty one) has nothing to report. Skipping must not consume the claim.
+  for (const owner of recipients) {
+    // buIds null would mean "unrestricted" and is never a real owner/admin-bu scope; someone without
+    // a BU list (or with an empty one) has nothing to report. Skipping must not consume the claim.
     if (!Array.isArray(owner.bu_ids) || owner.bu_ids.length === 0) continue;
 
     if (!(await repository.claim(db, owner.user_id, date))) continue; // already sent (or in flight)

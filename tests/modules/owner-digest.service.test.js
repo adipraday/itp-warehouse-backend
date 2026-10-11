@@ -106,13 +106,18 @@ describe('formatDigest', () => {
 describe('runOwnerDigest', () => {
   const morning = new Date('2026-10-11T23:30:00Z'); // 06:30 WIB on 12 Oct — before the hour
   const sendTime = new Date('2026-10-12T01:00:00Z'); // 08:00 WIB on 12 Oct
+  let directory;
 
   beforeEach(() => {
     vi.resetAllMocks();
-    userDirectory.findUsersByRole.mockResolvedValue([
-      { user_id: 4, bu_ids: [2, 3] },
-      { user_id: 9, bu_ids: [1, 6] }
-    ]);
+    directory = {
+      owner: [
+        { user_id: 4, bu_ids: [2, 3] },
+        { user_id: 9, bu_ids: [1, 6] }
+      ],
+      'admin-bu': [{ user_id: 5, bu_ids: [3] }]
+    };
+    userDirectory.findUsersByRole.mockImplementation(async (_db, role) => directory[role] ?? []);
     repository.claim.mockResolvedValue(true);
     repository.release.mockResolvedValue();
     ownerInsights.getBranchComparison.mockResolvedValue({
@@ -132,10 +137,12 @@ describe('runOwnerDigest', () => {
     expect(await service.runOwnerDigest(db, { now: night, sendHour: 7, log })).toBe(0);
   });
 
-  it('sends each owner their own digest about yesterday, scoped to their own BUs', async () => {
+  it('sends each owner and admin-bu their own digest about yesterday, scoped to their own BUs', async () => {
     const sent = await service.runOwnerDigest(db, { now: sendTime, sendHour: 7, log });
 
-    expect(sent).toBe(2);
+    expect(sent).toBe(3);
+    expect(repository.claim).toHaveBeenCalledWith(db, 5, '2026-10-11');
+    expect(ownerInsights.getBranchComparison).toHaveBeenCalledWith(db, { from: '2026-10-11', to: '2026-10-11' }, [3], null);
     expect(repository.claim).toHaveBeenCalledWith(db, 4, '2026-10-11');
     expect(repository.claim).toHaveBeenCalledWith(db, 9, '2026-10-11');
     expect(ownerInsights.getBranchComparison).toHaveBeenCalledWith(db, { from: '2026-10-11', to: '2026-10-11' }, [2, 3], null);
@@ -147,6 +154,7 @@ describe('runOwnerDigest', () => {
   });
 
   it('skips an owner whose day was already claimed (no duplicate on restart or catch-up)', async () => {
+    directory = { owner: [{ user_id: 4, bu_ids: [2, 3] }, { user_id: 9, bu_ids: [1, 6] }], 'admin-bu': [] };
     repository.claim.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
 
     expect(await service.runOwnerDigest(db, { now: sendTime, sendHour: 7, log })).toBe(1);
@@ -155,6 +163,7 @@ describe('runOwnerDigest', () => {
   });
 
   it('gives the claim back when sending fails, so the next tick retries', async () => {
+    directory = { owner: [{ user_id: 4, bu_ids: [2, 3] }, { user_id: 9, bu_ids: [1, 6] }], 'admin-bu': [] };
     push.notifyUsers.mockRejectedValueOnce(new Error('db down')).mockResolvedValueOnce();
 
     expect(await service.runOwnerDigest(db, { now: sendTime, sendHour: 7, log })).toBe(1);
@@ -163,10 +172,7 @@ describe('runOwnerDigest', () => {
   });
 
   it('never claims or sends for an owner without a BU scope', async () => {
-    userDirectory.findUsersByRole.mockResolvedValue([
-      { user_id: 4, bu_ids: null },
-      { user_id: 5, bu_ids: [] }
-    ]);
+    directory = { owner: [{ user_id: 4, bu_ids: null }], 'admin-bu': [{ user_id: 5, bu_ids: [] }] };
 
     expect(await service.runOwnerDigest(db, { now: sendTime, sendHour: 7, log })).toBe(0);
     expect(repository.claim).not.toHaveBeenCalled();
