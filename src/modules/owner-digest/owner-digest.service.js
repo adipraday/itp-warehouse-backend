@@ -52,9 +52,10 @@ export function formatDigest({ date, branches, cash }) {
     sentences.push(`${summary.overdue_open_count} sesi kasir belum ditutup lebih dari 24 jam.`);
   }
 
-  if (totals.low_stock_count + totals.out_of_stock_count > 0) {
-    sentences.push(`Stok: ${totals.out_of_stock_count} habis, ${totals.low_stock_count} menipis.`);
-  }
+  const stock = [];
+  if (totals.out_of_stock_count > 0) stock.push(`${totals.out_of_stock_count} habis`);
+  if (totals.low_stock_count > 0) stock.push(`${totals.low_stock_count} menipis`);
+  if (stock.length > 0) sentences.push(`Stok: ${stock.join(', ')}.`);
 
   return {
     title: `Ringkasan ${dateLabel(date)}`,

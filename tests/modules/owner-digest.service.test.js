@@ -92,6 +92,13 @@ describe('formatDigest', () => {
       },
       cash: { summary: cashSummary() }
     });
+    const onlyLow = service.formatDigest({
+      date: '2026-10-11',
+      branches: { totals: totals({ sales_count: 0, low_stock_count: 1, out_of_stock_count: 0 }), branches: [] },
+      cash: { summary: cashSummary({ sessions_closed: 0 }) }
+    });
+    expect(onlyLow.body).toBe('Tidak ada penjualan. Stok: 1 menipis.');
+
     expect(noBaseline.body).toBe('Penjualan Rp 1.250.000 (12 transaksi). Margin 24.5%. Kas: semua sesi cocok.');
   });
 });
