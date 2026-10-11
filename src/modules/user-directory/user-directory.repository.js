@@ -53,3 +53,17 @@ export async function findUserIdsForWarehouseStaff(db, warehouseId, roles) {
   );
   return rows.map((row) => row.user_id);
 }
+
+// Everyone of a role with the BU scope their last verified token carried — used by jobs that
+// address each person individually (the owner daily digest). `bu_ids` comes back decoded
+// (array) or null (the token's unrestricted claim); MariaDB stores JSON as text, so a raw
+// string is parsed here rather than leaking to callers.
+export async function findUsersByRole(db, role) {
+  const [rows] = await db.execute('SELECT user_id, bu_ids FROM user_directory WHERE role = ? ORDER BY user_id ASC', [
+    role
+  ]);
+  return rows.map((row) => ({
+    user_id: Number(row.user_id),
+    bu_ids: typeof row.bu_ids === 'string' ? JSON.parse(row.bu_ids) : (row.bu_ids ?? null)
+  }));
+}

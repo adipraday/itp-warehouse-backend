@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
     findTokensForRoleAndBu: vi.fn(),
     findTokensForRole: vi.fn(),
     findTokensForWarehouseStaff: vi.fn(),
+    findTokensForUsers: vi.fn(),
     removeTokens: vi.fn()
   },
   notifications: { createForUsers: vi.fn() },
@@ -26,7 +27,8 @@ import {
   notifyRole,
   notifyAllWithRole,
   notifyWarehouseRoles,
-  notifyStakeholders
+  notifyStakeholders,
+  notifyUsers
 } from '../../src/shared/notifications/push.js';
 
 const db = { tag: 'db' };
@@ -158,5 +160,36 @@ describe('notifyAllWithRole / notifyWarehouseRoles / notifyStakeholders', () => 
     expect(mocks.directory.findUserIdsForRole).toHaveBeenCalledWith(db, 'owner', 3);
     expect(mocks.tokens.findTokensForRole).toHaveBeenCalledWith(db, 'owner', 3);
     expect(mocks.directory.findUserIdsForWarehouseStaff).toHaveBeenCalledWith(db, 9, ['admin-warehouse']);
+  });
+});
+
+describe('notifyUsers — message addressed to named users', () => {
+  it('writes one inbox row for the users and pushes to their devices', async () => {
+    mocks.tokens.findTokensForUsers.mockResolvedValue([{ user_id: 4, fcm_token: 't-owner' }]);
+
+    await notifyUsers(db, { userIds: [4], title: 'Ringkasan', body: 'Isi', data: { type: 'owner_digest', date: '2026-10-11' } });
+
+    expect(mocks.notifications.createForUsers).toHaveBeenCalledWith(db, [4], {
+      title: 'Ringkasan',
+      body: 'Isi',
+      type: 'owner_digest',
+      data: { type: 'owner_digest', date: '2026-10-11' }
+    });
+    expect(mocks.tokens.findTokensForUsers).toHaveBeenCalledWith(db, [4]);
+    expect(mocks.messaging.sendEachForMulticast).toHaveBeenCalledTimes(1);
+  });
+
+  it('rethrows an inbox failure so the caller can retry, but swallows a push failure', async () => {
+    mocks.notifications.createForUsers.mockRejectedValueOnce(new Error('db down'));
+    await expect(notifyUsers(db, { userIds: [4], ...payload })).rejects.toThrow('db down');
+
+    mocks.tokens.findTokensForUsers.mockResolvedValue([{ user_id: 4, fcm_token: 't-owner' }]);
+    mocks.messaging.sendEachForMulticast.mockRejectedValueOnce(new Error('fcm down'));
+    await expect(notifyUsers(db, { userIds: [4], ...payload })).resolves.toBeUndefined();
+  });
+
+  it('does nothing for an empty audience', async () => {
+    await notifyUsers(db, { userIds: [], ...payload });
+    expect(mocks.notifications.createForUsers).not.toHaveBeenCalled();
   });
 });

@@ -24,7 +24,12 @@ async function deliver(db, { tokenRecipients, directoryUserIds }, { title, body,
   if (userIds.length === 0) return;
 
   await notificationsRepository.createForUsers(db, userIds, { title, body, type, data });
+  await sendPush(db, tokenRecipients, { title, body, data });
+}
 
+// The FCM half of deliver(), split out so notifyUsers() can run it after (and independently of)
+// its own inbox write.
+async function sendPush(db, tokenRecipients, { title, body, data = {} }) {
   const messaging = getMessaging();
   if (!messaging || tokenRecipients.length === 0) return;
 
@@ -154,4 +159,20 @@ export async function notifyStakeholders(db, {
     tasks.push(notifyWarehouseRoles(db, { warehouseId, roles: warehouseRoles, title, body, data }));
   }
   await Promise.all(tasks);
+}
+
+// For a message addressed to specific, named users (not a role/BU/warehouse audience): each gets
+// an inbox row, plus a push to every device they have registered. Unlike the best-effort helpers
+// above, a failure of the INBOX write is rethrown — the caller (the owner digest) must know the
+// message was not delivered so it can give its claim back and retry. A failure of the push alone
+// is only logged: the inbox row already exists, and retrying would duplicate it.
+export async function notifyUsers(db, { userIds, title, body, data = {} }) {
+  if (userIds.length === 0) return;
+  await notificationsRepository.createForUsers(db, userIds, { title, body, type: data.type ?? 'general', data });
+  try {
+    const tokenRecipients = await deviceTokensRepository.findTokensForUsers(db, userIds);
+    await sendPush(db, tokenRecipients, { title, body, data });
+  } catch (error) {
+    console.warn('[push] notifyUsers push failed', { userIds, error: error.message });
+  }
 }

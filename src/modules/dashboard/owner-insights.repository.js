@@ -1,4 +1,5 @@
 import { buIdsCondition, directBuIdsCondition, assignedWarehouseCondition } from '../../shared/auth/bu-filter.js';
+import { BUSINESS_UTC_OFFSET, DB_UTC_OFFSET } from '../../shared/utils/business-time.js';
 
 // Owner / multi-branch monitoring queries — read-only, built on the same scoping helpers as the
 // rest of the dashboard (BU filter first, then the optional assigned-warehouse narrowing). Every
@@ -106,8 +107,12 @@ export async function stockValueByWarehouse(db, { buIds, assignedWarehouseIds })
 
 // ---- Cash variance monitoring ----------------------------------------------------------------
 
+// A session belongs to the business day (WIB) it was CLOSED on. closed_at is stored in UTC, so a
+// register closed at 06:00 WIB would otherwise count toward the previous day.
+const CLOSED_BUSINESS_DAY = `DATE(CONVERT_TZ(closed_at, '${DB_UTC_OFFSET}', '${BUSINESS_UTC_OFFSET}'))`;
+
 function cashFilter({ from, to, warehouseId, buIds, assignedWarehouseIds }) {
-  const conditions = ["status = 'CLOSED'", 'DATE(closed_at) >= ?', 'DATE(closed_at) <= ?'];
+  const conditions = ["status = 'CLOSED'", `${CLOSED_BUSINESS_DAY} >= ?`, `${CLOSED_BUSINESS_DAY} <= ?`];
   const params = [from, to];
   if (warehouseId) {
     conditions.push('warehouse_id = ?');

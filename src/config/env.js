@@ -31,7 +31,12 @@ const schema = {
     // keys/jwt-private.pem. Missing/unreadable is tolerated at boot (push
     // sending just becomes a no-op, logged once) so local dev without a
     // service account file still runs.
-    FIREBASE_SERVICE_ACCOUNT_PATH: { type: 'string', default: './keys/firebase-service-account.json' }
+    FIREBASE_SERVICE_ACCOUNT_PATH: { type: 'string', default: './keys/firebase-service-account.json' },
+    // Owner daily digest (2026-10-12): every morning each owner gets an inbox row + push that
+    // summarises yesterday (WIB). OWNER_DIGEST_ENABLED=false switches the scheduler off entirely;
+    // OWNER_DIGEST_HOUR (0-23, WIB) is the earliest hour it will send.
+    OWNER_DIGEST_ENABLED: { type: 'boolean', default: true },
+    OWNER_DIGEST_HOUR: { type: 'integer', default: 7, minimum: 0, maximum: 23 }
   }
 };
 

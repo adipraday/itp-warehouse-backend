@@ -82,3 +82,15 @@ export async function removeTokens(db, tokens) {
   if (tokens.length === 0) return;
   await db.query(`DELETE FROM device_tokens WHERE fcm_token IN (${tokens.map(() => '?').join(',')})`, tokens);
 }
+
+// Devices of specific users — for a message addressed to named people (e.g. the owner daily
+// digest, which is personalised per owner) rather than to a role/BU/warehouse audience.
+export async function findTokensForUsers(db, userIds) {
+  if (userIds.length === 0) return [];
+  const placeholders = userIds.map(() => '?').join(',');
+  const [rows] = await db.execute(
+    `SELECT user_id, fcm_token FROM device_tokens WHERE user_id IN (${placeholders})`,
+    userIds
+  );
+  return rows;
+}

@@ -1,4 +1,5 @@
 import { BadRequestError } from '../../shared/errors/app-error.js';
+import { businessDate } from '../../shared/utils/business-time.js';
 import * as repository from './owner-insights.repository.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -17,8 +18,9 @@ function toIso(date) {
   return date.toISOString().slice(0, 10);
 }
 
+// "Today" is the WIB business day, not the server's UTC date (a day behind from 00:00 to 07:00 WIB).
 function today() {
-  return toIso(new Date());
+  return businessDate();
 }
 
 // Resolves the reporting window. Default is the last 30 days ending today; `from`/`to` may be
