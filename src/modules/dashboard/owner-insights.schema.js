@@ -84,7 +84,7 @@ export const cashVarianceSchema = {
       ...periodQuerystring,
       warehouse_id: { type: 'integer' },
       min_abs_difference: { type: 'number', minimum: 0 },
-      limit: { type: 'integer', minimum: 1, maximum: 200 }
+      limit: { type: 'integer', minimum: 1, maximum: 1000 }
     }
   },
   response: {
@@ -149,7 +149,7 @@ export const stuckQueueSchema = {
     properties: {
       warehouse_id: { type: 'integer' },
       min_age_days: { type: 'integer', minimum: 0, maximum: 365 },
-      limit: { type: 'integer', minimum: 1, maximum: 200 }
+      limit: { type: 'integer', minimum: 1, maximum: 1000 }
     }
   },
   response: {
@@ -211,7 +211,7 @@ export const agingSchema = {
     properties: {
       side: { type: 'string', enum: ['receivable', 'payable'] },
       warehouse_id: { type: 'integer' },
-      limit: { type: 'integer', minimum: 1, maximum: 200 }
+      limit: { type: 'integer', minimum: 1, maximum: 1000 }
     }
   },
   response: {
