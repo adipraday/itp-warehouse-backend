@@ -881,6 +881,12 @@ Semua read-only, agregasi. `warehouse_id` di semua endpoint ini **opsional** —
 | GET | `/api/dashboard/sales-trend?warehouse_id=1&from=2026-08-01&to=2026-08-31` | Sama seperti `/sales`, tapi di-breakdown per hari (buat grafik tren) |
 | GET | `/api/dashboard/purchases?warehouse_id=1&from=...&to=...` | Total pembelian COMPLETED dalam rentang tanggal |
 | GET | `/api/dashboard/profit?warehouse_id=1&from=...&to=...` | Gross profit dari sales COMPLETED (revenue − HPP beku) |
+| GET | `/api/dashboard/branches?from=...&to=...` | **Perbandingan cabang** (2026-10-12): 1 baris per warehouse yang boleh dilihat caller. Hanya `super-admin`/`owner`/`admin-bu` (403 untuk role lain) |
+| GET | `/api/dashboard/cash-variance?from=...&to=...&warehouse_id=&min_abs_difference=&limit=` | **Pantauan selisih kas** (2026-10-12): sesi kasir CLOSED berselisih lintas cabang. Role sama seperti `/branches` |
+
+**`/branches`:** `from`/`to` opsional (default 30 hari terakhir sampai hari ini; maksimal 366 hari, `from` > `to` → 400 `INVALID_DATE_RANGE`). Response `{ period: { from, to, previous_from, previous_to }, totals, branches[] }`. Periode pembanding = rentang sama panjang tepat sebelum rentang terpilih. Tiap `branches[]`: `warehouse_id, code, name, bu_id, sales_count, sales_total, previous_sales_total, sales_growth_pct (null bila periode lalu tanpa penjualan), revenue, cogs, gross_profit, gross_margin_pct, stock_value, low_stock_count, out_of_stock_count` — urut `sales_total DESC`; warehouse tanpa transaksi tetap muncul sebagai baris nol. `sales_total` = angka "Total Sales" dashboard (termasuk pajak); `revenue/cogs/gross_profit` = basis yang sama dengan `/profit`. Scope otomatis per BU token (owner = semua BU company-nya).
+
+**`/cash-variance`:** default 30 hari terakhir; filter berdasarkan tanggal `closed_at`. `min_abs_difference` default 0.01 (selisih < itu dianggap pembulatan), `limit` default 50 (maks 200). Response `{ period, min_abs_difference, summary { sessions_closed, sessions_with_variance, total_shortage, total_overage, net_difference, overdue_open_count }, by_warehouse[] (urut kurang terbesar), sessions[] (|selisih| terbesar dulu), overdue_open_sessions[] }`. `overdue_open_sessions` = sesi OPEN yang dibuka > 24 jam lalu (lupa tutup kasir), maksimal 20, tidak terpengaruh `min_abs_difference`. Negatif pada `cash_difference` = kurang, positif = lebih.
 
 **Object `/summary`:**
 ```json
