@@ -141,3 +141,64 @@ export const cashVarianceSchema = {
     }
   }
 };
+
+export const stuckQueueSchema = {
+  tags: ['dashboard'],
+  querystring: {
+    type: 'object',
+    properties: {
+      warehouse_id: { type: 'integer' },
+      min_age_days: { type: 'integer', minimum: 0, maximum: 365 },
+      limit: { type: 'integer', minimum: 1, maximum: 200 }
+    }
+  },
+  response: {
+    200: {
+      type: 'object',
+      properties: {
+        data: {
+          type: 'object',
+          properties: {
+            min_age_days: { type: 'integer' },
+            as_of: { type: 'string' },
+            summary: {
+              type: 'object',
+              properties: {
+                total: { type: 'integer' },
+                by_group: {
+                  type: 'object',
+                  properties: {
+                    approval: { type: 'integer' },
+                    completion: { type: 'integer' },
+                    draft: { type: 'integer' },
+                    held: { type: 'integer' }
+                  }
+                },
+                by_kind: { type: 'object', additionalProperties: { type: 'integer' } },
+                truncated: { type: 'boolean' }
+              }
+            },
+            items: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  kind: { type: 'string' },
+                  group: { type: 'string' },
+                  document_id: { type: 'integer' },
+                  document_number: { type: 'string' },
+                  warehouse_id: { type: 'integer' },
+                  to_warehouse_id: { type: ['integer', 'null'] },
+                  status: { type: 'string' },
+                  waiting_since: { type: 'string' },
+                  age_days: { type: 'integer' },
+                  created_by: { type: ['integer', 'null'] }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+};

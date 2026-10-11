@@ -2,6 +2,7 @@ import { addDays, businessDate, businessHour } from '../../shared/utils/business
 import { notifyUsers } from '../../shared/notifications/push.js';
 import * as userDirectoryRepository from '../user-directory/user-directory.repository.js';
 import * as ownerInsights from '../dashboard/owner-insights.service.js';
+import * as stuckQueue from '../dashboard/stuck-queue.service.js';
 import * as repository from './owner-digest.repository.js';
 
 // A digest is only worth sending as a morning briefing. If the app was down at the configured
@@ -25,7 +26,7 @@ function dateLabel(isoDate) {
 
 // Pure: turns one day's branch-comparison + cash-variance numbers into the notification text.
 // Only parts that carry information are included, so a quiet day stays short.
-export function formatDigest({ date, branches, cash }) {
+export function formatDigest({ date, branches, cash, stuck = null }) {
   const { totals, branches: rows } = branches;
   const sentences = [];
 
@@ -56,6 +57,10 @@ export function formatDigest({ date, branches, cash }) {
     sentences.push(`${summary.overdue_open_count} sesi kasir belum ditutup lebih dari 24 jam.`);
   }
 
+  if (stuck && stuck.total > 0) {
+    sentences.push(`${stuck.total} dokumen menunggu ${stuck.min_age_days} hari atau lebih.`);
+  }
+
   const stock = [];
   if (totals.out_of_stock_count > 0) stock.push(`${totals.out_of_stock_count} habis`);
   if (totals.low_stock_count > 0) stock.push(`${totals.low_stock_count} menipis`);
@@ -73,12 +78,18 @@ export function formatDigest({ date, branches, cash }) {
 // warehouse in scope (nothing to report).
 export async function buildDigest(db, { buIds, date }) {
   const period = { from: date, to: date };
-  const [branches, cash] = await Promise.all([
+  const [branches, cash, queue] = await Promise.all([
     ownerInsights.getBranchComparison(db, period, buIds, null),
-    ownerInsights.getCashVariance(db, period, buIds, null)
+    ownerInsights.getCashVariance(db, period, buIds, null),
+    stuckQueue.getStuckQueue(db, { limit: 1 }, buIds, null)
   ]);
   if (branches.data.branches.length === 0) return null;
-  return formatDigest({ date, branches: branches.data, cash: cash.data });
+  return formatDigest({
+    date,
+    branches: branches.data,
+    cash: cash.data,
+    stuck: { total: queue.data.summary.total, min_age_days: queue.data.min_age_days }
+  });
 }
 
 // One scheduler tick. Safe to call as often as you like: a day is claimed per owner with an atomic
