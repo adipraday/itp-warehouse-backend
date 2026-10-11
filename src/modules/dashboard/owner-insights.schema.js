@@ -1,0 +1,143 @@
+const periodQuerystring = {
+  from: { type: 'string', format: 'date' },
+  to: { type: 'string', format: 'date' }
+};
+
+const branchProperties = {
+  warehouse_id: { type: 'integer' },
+  code: { type: 'string' },
+  name: { type: 'string' },
+  bu_id: { type: ['integer', 'null'] },
+  sales_count: { type: 'integer' },
+  sales_total: { type: 'string' },
+  previous_sales_total: { type: 'string' },
+  sales_growth_pct: { type: ['number', 'null'] },
+  revenue: { type: 'string' },
+  cogs: { type: 'string' },
+  gross_profit: { type: 'string' },
+  gross_margin_pct: { type: 'number' },
+  stock_value: { type: 'string' },
+  low_stock_count: { type: 'integer' },
+  out_of_stock_count: { type: 'integer' }
+};
+
+export const branchComparisonSchema = {
+  tags: ['dashboard'],
+  querystring: { type: 'object', properties: periodQuerystring },
+  response: {
+    200: {
+      type: 'object',
+      properties: {
+        data: {
+          type: 'object',
+          properties: {
+            period: {
+              type: 'object',
+              properties: {
+                from: { type: 'string' },
+                to: { type: 'string' },
+                previous_from: { type: 'string' },
+                previous_to: { type: 'string' }
+              }
+            },
+            totals: {
+              type: 'object',
+              properties: {
+                sales_count: { type: 'integer' },
+                sales_total: { type: 'string' },
+                previous_sales_total: { type: 'string' },
+                sales_growth_pct: { type: ['number', 'null'] },
+                revenue: { type: 'string' },
+                gross_profit: { type: 'string' },
+                gross_margin_pct: { type: 'number' },
+                stock_value: { type: 'string' },
+                low_stock_count: { type: 'integer' },
+                out_of_stock_count: { type: 'integer' }
+              }
+            },
+            branches: { type: 'array', items: { type: 'object', properties: branchProperties } }
+          }
+        }
+      }
+    }
+  }
+};
+
+const varianceSessionProperties = {
+  id: { type: 'integer' },
+  warehouse_id: { type: 'integer' },
+  user_id: { type: 'integer' },
+  opened_at: { type: 'string' },
+  closed_at: { type: 'string' },
+  opening_amount: { type: 'string' },
+  expected_cash_amount: { type: 'string' },
+  closing_amount: { type: 'string' },
+  cash_difference: { type: 'string' },
+  notes: { type: ['string', 'null'] }
+};
+
+export const cashVarianceSchema = {
+  tags: ['dashboard'],
+  querystring: {
+    type: 'object',
+    properties: {
+      ...periodQuerystring,
+      warehouse_id: { type: 'integer' },
+      min_abs_difference: { type: 'number', minimum: 0 },
+      limit: { type: 'integer', minimum: 1, maximum: 200 }
+    }
+  },
+  response: {
+    200: {
+      type: 'object',
+      properties: {
+        data: {
+          type: 'object',
+          properties: {
+            period: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } } },
+            min_abs_difference: { type: 'string' },
+            summary: {
+              type: 'object',
+              properties: {
+                sessions_closed: { type: 'integer' },
+                sessions_with_variance: { type: 'integer' },
+                total_shortage: { type: 'string' },
+                total_overage: { type: 'string' },
+                net_difference: { type: 'string' },
+                overdue_open_count: { type: 'integer' }
+              }
+            },
+            by_warehouse: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  warehouse_id: { type: 'integer' },
+                  sessions_closed: { type: 'integer' },
+                  sessions_with_variance: { type: 'integer' },
+                  shortage: { type: 'string' },
+                  overage: { type: 'string' },
+                  net: { type: 'string' }
+                }
+              }
+            },
+            sessions: { type: 'array', items: { type: 'object', properties: varianceSessionProperties } },
+            overdue_open_sessions: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'integer' },
+                  warehouse_id: { type: 'integer' },
+                  user_id: { type: 'integer' },
+                  opened_at: { type: 'string' },
+                  opening_amount: { type: 'string' }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+};

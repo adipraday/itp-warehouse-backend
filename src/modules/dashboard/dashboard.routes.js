@@ -2,6 +2,8 @@ import { authorize } from '../../shared/auth/authorize.js';
 import { buScope } from '../../shared/auth/bu-scope.js';
 import { HPP_VISIBLE_ROLES } from '../../shared/auth/role-matrix.js';
 import * as service from './dashboard.service.js';
+import * as ownerInsights from './owner-insights.service.js';
+import { branchComparisonSchema, cashVarianceSchema } from './owner-insights.schema.js';
 import {
   dashboardSummarySchema,
   dashboardStockSchema,
@@ -14,6 +16,10 @@ import {
 const scope = buScope('dashboard');
 // COGS/gross-margin — HPP data, hidden from staff-gudang/kasir-sales like the rest.
 const hppGuard = authorize(...HPP_VISIBLE_ROLES);
+// Cross-branch monitoring (branch comparison, cash variance) is for whoever oversees several
+// warehouses: owner (every BU of their company), admin-bu (their BUs) and super-admin. A
+// single-warehouse admin already has their own dashboard; staff roles never see HPP/cash audit.
+const overseerGuard = authorize('super-admin', 'owner', 'admin-bu');
 
 export async function dashboardRoutes(app) {
   app.get('/summary', { preValidation: scope, schema: dashboardSummarySchema }, async (request) => {
@@ -59,4 +65,30 @@ export async function dashboardRoutes(app) {
       request.userContext?.assignedWarehouseIds
     );
   });
+
+  app.get(
+    '/branches',
+    { onRequest: overseerGuard, preValidation: scope, schema: branchComparisonSchema },
+    async (request) => {
+      return ownerInsights.getBranchComparison(
+        app.db,
+        request.query,
+        request.userContext?.buIds,
+        request.userContext?.assignedWarehouseIds
+      );
+    }
+  );
+
+  app.get(
+    '/cash-variance',
+    { onRequest: overseerGuard, preValidation: scope, schema: cashVarianceSchema },
+    async (request) => {
+      return ownerInsights.getCashVariance(
+        app.db,
+        request.query,
+        request.userContext?.buIds,
+        request.userContext?.assignedWarehouseIds
+      );
+    }
+  );
 }
