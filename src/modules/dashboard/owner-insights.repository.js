@@ -86,7 +86,7 @@ export async function stockHealthByWarehouse(db, { buIds, assignedWarehouseIds }
             COALESCE(SUM(CASE WHEN s.quantity > 0 AND s.quantity <= i.min_stock THEN 1 ELSE 0 END), 0) AS low_stock_count,
             COALESCE(SUM(CASE WHEN s.quantity = 0 THEN 1 ELSE 0 END), 0) AS out_of_stock_count
      FROM stocks s JOIN items i ON i.id = s.item_id
-     ${scope.conditions.length ? `WHERE ${scope.conditions.join(' AND ')}` : ''}
+     WHERE i.deleted_at IS NULL ${scope.conditions.length ? `AND ${scope.conditions.join(' AND ')}` : ''}
      GROUP BY s.warehouse_id`,
     scope.params
   );

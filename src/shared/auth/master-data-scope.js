@@ -12,6 +12,8 @@
 // (unassigned — legacy data, or created before this fix) is usable ONLY by
 // super-admin, same convention as warehouses.bu_id.
 
+import { ConflictError } from '../errors/app-error.js';
+
 function forbidden(message) {
   const error = new Error(message);
   error.statusCode = 403;
@@ -39,11 +41,16 @@ export function assertRowInScope(row, buIds, label) {
 // detail line that carries item_id (inbound, outbound, sale, purchase, return,
 // transfer, opname).
 export async function assertItemsInScope(db, itemIds, buIds) {
-  if (buIds == null) return;
   const ids = [...new Set(itemIds)].filter((id) => id != null);
   if (ids.length === 0) return;
   const placeholders = ids.map(() => '?').join(',');
-  const [rows] = await db.execute(`SELECT id, bu_id FROM items WHERE id IN (${placeholders})`, ids);
+  const [rows] = await db.execute(`SELECT id, bu_id, deleted_at FROM items WHERE id IN (${placeholders})`, ids);
+  // A deleted (archived) item can no longer go on a document — for everyone, super-admin included.
+  const deleted = rows.find((row) => row.deleted_at != null);
+  if (deleted) {
+    throw new ConflictError('ITEM_DELETED', `item ${deleted.id} has been deleted and can no longer be used`);
+  }
+  if (buIds == null) return;
   for (const row of rows) {
     if (!isAllowed(row.bu_id, buIds)) {
       throw forbidden(`item ${row.id} is outside your business unit`);

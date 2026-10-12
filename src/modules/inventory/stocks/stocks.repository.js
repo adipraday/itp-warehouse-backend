@@ -42,8 +42,10 @@ export async function decrement(connection, warehouseId, itemId, delta) {
 
 import { buIdsCondition, assignedWarehouseCondition } from '../../../shared/auth/bu-filter.js';
 
+// `i.deleted_at IS NULL`: a deleted (archived) item no longer shows up in stock listings or in the
+// low/out-of-stock counts, even though its zero-quantity stock rows are kept for history.
 function buildFilter({ warehouseId, itemId, buIds, assignedWarehouseIds }) {
-  const conditions = [];
+  const conditions = ['i.deleted_at IS NULL'];
   const params = [];
   if (warehouseId) {
     conditions.push('s.warehouse_id = ?');
@@ -81,12 +83,12 @@ export async function findAll(db, { warehouseId, itemId, buIds, assignedWarehous
 
 export async function count(db, { warehouseId, itemId, buIds, assignedWarehouseIds }) {
   const { clause, params } = buildFilter({ warehouseId, itemId, buIds, assignedWarehouseIds });
-  const [rows] = await db.execute(`SELECT COUNT(*) AS total FROM stocks s ${clause}`, params);
+  const [rows] = await db.execute(`SELECT COUNT(*) AS total FROM stocks s JOIN items i ON i.id = s.item_id ${clause}`, params);
   return Number(rows[0].total);
 }
 
 export async function findLowStock(db, { warehouseId, buIds, assignedWarehouseIds, limit, offset }) {
-  const conditions = ['s.quantity > 0', 's.quantity <= i.min_stock'];
+  const conditions = ['i.deleted_at IS NULL', 's.quantity > 0', 's.quantity <= i.min_stock'];
   const params = [];
   if (warehouseId) {
     conditions.push('s.warehouse_id = ?');
@@ -111,7 +113,7 @@ export async function findLowStock(db, { warehouseId, buIds, assignedWarehouseId
 }
 
 export async function countLowStock(db, { warehouseId, buIds, assignedWarehouseIds }) {
-  const conditions = ['s.quantity > 0', 's.quantity <= i.min_stock'];
+  const conditions = ['i.deleted_at IS NULL', 's.quantity > 0', 's.quantity <= i.min_stock'];
   const params = [];
   if (warehouseId) {
     conditions.push('s.warehouse_id = ?');
@@ -135,7 +137,7 @@ export async function countLowStock(db, { warehouseId, buIds, assignedWarehouseI
 }
 
 export async function findOutOfStock(db, { warehouseId, buIds, assignedWarehouseIds, limit, offset }) {
-  const conditions = ['s.quantity = 0'];
+  const conditions = ['i.deleted_at IS NULL', 's.quantity = 0'];
   const params = [];
   if (warehouseId) {
     conditions.push('s.warehouse_id = ?');
@@ -160,7 +162,7 @@ export async function findOutOfStock(db, { warehouseId, buIds, assignedWarehouse
 }
 
 export async function countOutOfStock(db, { warehouseId, buIds, assignedWarehouseIds }) {
-  const conditions = ['s.quantity = 0'];
+  const conditions = ['i.deleted_at IS NULL', 's.quantity = 0'];
   const params = [];
   if (warehouseId) {
     conditions.push('s.warehouse_id = ?');
@@ -177,7 +179,7 @@ export async function countOutOfStock(db, { warehouseId, buIds, assignedWarehous
     params.push(...wh.params);
   }
   const [rows] = await db.execute(
-    `SELECT COUNT(*) AS total FROM stocks s WHERE ${conditions.join(' AND ')}`,
+    `SELECT COUNT(*) AS total FROM stocks s JOIN items i ON i.id = s.item_id WHERE ${conditions.join(' AND ')}`,
     params
   );
   return Number(rows[0].total);

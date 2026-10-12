@@ -5,6 +5,11 @@ import * as service from '../../src/modules/items/items.service.js';
 
 vi.mock('../../src/modules/items/items.repository.js');
 vi.mock('../../src/modules/inventory/stocks/stocks.repository.js');
+// deleteItem runs inside a transaction; hand the callback a fake connection instead of a real pool.
+const fakeConnection = { tag: 'connection' };
+vi.mock('../../src/shared/database/transaction.js', () => ({
+  withTransaction: async (_pool, work) => work(fakeConnection)
+}));
 
 const fakeDb = {};
 
@@ -303,6 +308,99 @@ describe('items.service — barcode', () => {
 
       expect(repository.findByBarcodeInBuIds).toHaveBeenCalledWith(fakeDb, '899123456', null);
       expect(result).toEqual({ data: { id: 1, barcode: '899123456', bu_id: 99 } });
+    });
+  });
+
+  describe('deleteItem (archive)', () => {
+    const live = { id: 7, sku: 'SKU-7', bu_id: 11, deleted_at: null };
+
+    beforeEach(() => {
+      repository.findById.mockResolvedValue(live);
+      repository.lockStockRows.mockResolvedValue([]);
+      repository.findOpenDocumentsUsingItem.mockResolvedValue([]);
+      repository.markDeleted.mockResolvedValue();
+    });
+
+    it('archives an item whose stock is 0 everywhere and that is on no open document', async () => {
+      repository.lockStockRows.mockResolvedValue([
+        { warehouse_id: 1, quantity: 0 },
+        { warehouse_id: 2, quantity: '0' }
+      ]);
+
+      const result = await service.deleteItem(fakeDb, 7, [11], 42);
+
+      expect(result).toEqual({ data: { id: 7, sku: 'SKU-7', deleted: true } });
+      expect(repository.markDeleted).toHaveBeenCalledWith(fakeConnection, 7, 42);
+    });
+
+    it('archives an item that never had a stock row at all', async () => {
+      await expect(service.deleteItem(fakeDb, 7, [11], 42)).resolves.toBeDefined();
+      expect(repository.markDeleted).toHaveBeenCalled();
+    });
+
+    it('rejects with 409 ITEM_HAS_STOCK and lists the warehouses that still hold stock', async () => {
+      repository.lockStockRows.mockResolvedValue([
+        { warehouse_id: 1, quantity: 0 },
+        { warehouse_id: 2, quantity: 5 },
+        { warehouse_id: 3, quantity: '12' }
+      ]);
+
+      await expect(service.deleteItem(fakeDb, 7, [11], 42)).rejects.toMatchObject({
+        statusCode: 409,
+        code: 'ITEM_HAS_STOCK',
+        details: [
+          { warehouse_id: 2, quantity: 5 },
+          { warehouse_id: 3, quantity: 12 }
+        ]
+      });
+      expect(repository.markDeleted).not.toHaveBeenCalled();
+    });
+
+    it('rejects with 409 ITEM_IN_OPEN_DOCUMENTS when an unfinished document still uses it', async () => {
+      repository.findOpenDocumentsUsingItem.mockResolvedValue([
+        { label: 'Transfer', number: 'TRF-000009', status: 'APPROVED' }
+      ]);
+
+      await expect(service.deleteItem(fakeDb, 7, [11], 42)).rejects.toMatchObject({
+        statusCode: 409,
+        code: 'ITEM_IN_OPEN_DOCUMENTS',
+        details: [{ type: 'Transfer', number: 'TRF-000009', status: 'APPROVED' }]
+      });
+      expect(repository.markDeleted).not.toHaveBeenCalled();
+    });
+
+    it('checks stock before open documents, so the clearer reason wins', async () => {
+      repository.lockStockRows.mockResolvedValue([{ warehouse_id: 2, quantity: 1 }]);
+      repository.findOpenDocumentsUsingItem.mockResolvedValue([{ label: 'Penjualan', number: 'SAL-1', status: 'DRAFT' }]);
+
+      await expect(service.deleteItem(fakeDb, 7, [11], 42)).rejects.toMatchObject({ code: 'ITEM_HAS_STOCK' });
+      expect(repository.findOpenDocumentsUsingItem).not.toHaveBeenCalled();
+    });
+
+    it('404s for a missing or already-deleted item (so a repeat delete is not a silent success)', async () => {
+      repository.findById.mockResolvedValue(null);
+      await expect(service.deleteItem(fakeDb, 7, [11], 42)).rejects.toMatchObject({ statusCode: 404 });
+
+      repository.findById.mockResolvedValue({ ...live, deleted_at: '2026-10-12 10:00:00.000' });
+      await expect(service.deleteItem(fakeDb, 7, [11], 42)).rejects.toMatchObject({ statusCode: 404 });
+    });
+
+    it('403s for an item in another business unit, and touches nothing', async () => {
+      await expect(service.deleteItem(fakeDb, 7, [99], 42)).rejects.toMatchObject({ statusCode: 403 });
+      expect(repository.lockStockRows).not.toHaveBeenCalled();
+      expect(repository.markDeleted).not.toHaveBeenCalled();
+    });
+
+    it('lets super-admin (buIds null) delete any business unit item', async () => {
+      await expect(service.deleteItem(fakeDb, 7, null, 1)).resolves.toBeDefined();
+    });
+
+    it('updateItem refuses to edit a deleted item', async () => {
+      repository.findById.mockResolvedValue({ ...live, deleted_at: '2026-10-12 10:00:00.000' });
+      await expect(
+        service.updateItem(fakeDb, 7, { sku: 'SKU-7', name: 'x', unit: 'pcs' }, [11])
+      ).rejects.toMatchObject({ statusCode: 404 });
+      expect(repository.update).not.toHaveBeenCalled();
     });
   });
 });

@@ -9,7 +9,9 @@ const itemProperties = {
   selling_price: { type: 'string' },
   created_by: { type: ['integer', 'null'] },
   created_at: { type: 'string' },
-  updated_at: { type: 'string' }
+  updated_at: { type: 'string' },
+  // Set only on an archived (deleted) item — it stays reachable by id so old documents keep resolving.
+  deleted_at: { type: ['string', 'null'] }
 };
 
 const paginationQuerystring = {
@@ -341,5 +343,23 @@ export const itemCostHistorySchema = {
       }
     },
     404: errorResponse
+  }
+};
+
+export const deleteItemSchema = {
+  tags: ['items'],
+  params: idParams,
+  response: {
+    200: {
+      type: 'object',
+      properties: {
+        data: {
+          type: 'object',
+          properties: { id: { type: 'integer' }, sku: { type: 'string' }, deleted: { type: 'boolean' } }
+        }
+      }
+    },
+    404: errorResponse,
+    409: errorResponse // ITEM_HAS_STOCK | ITEM_IN_OPEN_DOCUMENTS
   }
 };

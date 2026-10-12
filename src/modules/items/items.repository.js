@@ -1,10 +1,17 @@
 import { directBuIdsCondition } from '../../shared/auth/bu-filter.js';
 
-const COLUMNS = 'id, bu_id, sku, barcode, name, unit, min_stock, selling_price, created_by, created_at, updated_at';
+const COLUMNS =
+  'id, bu_id, sku, barcode, name, unit, min_stock, selling_price, created_by, created_at, updated_at, deleted_at';
+
+// Items are archived, never physically removed (stock history, documents and cost layers all point at
+// them), so every "current items" query below filters `deleted_at IS NULL`. Only findById still returns
+// an archived row, so old document links and the item detail page keep resolving.
 
 function buFilter(buIds) {
   const bu = directBuIdsCondition('bu_id', buIds);
-  return bu ? { clause: `WHERE ${bu.clause}`, params: bu.params } : { clause: '', params: [] };
+  return bu
+    ? { clause: `WHERE deleted_at IS NULL AND ${bu.clause}`, params: bu.params }
+    : { clause: 'WHERE deleted_at IS NULL', params: [] };
 }
 
 export async function findAll(db, { limit, offset, buIds = null }) {
@@ -32,7 +39,7 @@ export async function findById(db, id) {
 // MySQL's NULL-safe equality, so buId === null (an unassigned item) matches
 // other unassigned rows without needing a separate branch.
 export async function findBySkuInBu(db, sku, buId) {
-  const [rows] = await db.execute(`SELECT ${COLUMNS} FROM items WHERE sku = ? AND bu_id <=> ?`, [sku, buId]);
+  const [rows] = await db.execute(`SELECT ${COLUMNS} FROM items WHERE sku = ? AND bu_id <=> ? AND deleted_at IS NULL`, [sku, buId]);
   return rows[0] ?? null;
 }
 
@@ -41,7 +48,7 @@ export async function findBySkuInBu(db, sku, buId) {
 // both register the same real-world product barcode. Used when we already
 // know the ONE target bu_id (create/update conflict-checking).
 export async function findByBarcodeInBu(db, barcode, buId) {
-  const [rows] = await db.execute(`SELECT ${COLUMNS} FROM items WHERE barcode = ? AND bu_id <=> ?`, [barcode, buId]);
+  const [rows] = await db.execute(`SELECT ${COLUMNS} FROM items WHERE barcode = ? AND bu_id <=> ? AND deleted_at IS NULL`, [barcode, buId]);
   return rows[0] ?? null;
 }
 
@@ -54,10 +61,10 @@ export async function findByBarcodeInBu(db, barcode, buId) {
 export async function findByBarcodeInBuIds(db, barcode, buIds) {
   const bu = directBuIdsCondition('bu_id', buIds);
   if (!bu) {
-    const [rows] = await db.execute(`SELECT ${COLUMNS} FROM items WHERE barcode = ?`, [barcode]);
+    const [rows] = await db.execute(`SELECT ${COLUMNS} FROM items WHERE barcode = ? AND deleted_at IS NULL`, [barcode]);
     return rows[0] ?? null;
   }
-  const [rows] = await db.execute(`SELECT ${COLUMNS} FROM items WHERE barcode = ? AND ${bu.clause}`, [
+  const [rows] = await db.execute(`SELECT ${COLUMNS} FROM items WHERE barcode = ? AND deleted_at IS NULL AND ${bu.clause}`, [
     barcode,
     ...bu.params
   ]);
@@ -91,7 +98,7 @@ export async function update(
 export async function search(db, q, { limit, offset, buIds = null }) {
   const like = `%${q}%`;
   const bu = directBuIdsCondition('bu_id', buIds);
-  const conditions = ['(sku LIKE ? OR name LIKE ? OR barcode LIKE ?)'];
+  const conditions = ['deleted_at IS NULL', '(sku LIKE ? OR name LIKE ? OR barcode LIKE ?)'];
   const params = [like, like, like];
   if (bu) {
     conditions.push(bu.clause);
@@ -112,7 +119,7 @@ export async function search(db, q, { limit, offset, buIds = null }) {
 export async function countSearch(db, q, buIds = null) {
   const like = `%${q}%`;
   const bu = directBuIdsCondition('bu_id', buIds);
-  const conditions = ['(sku LIKE ? OR name LIKE ? OR barcode LIKE ?)'];
+  const conditions = ['deleted_at IS NULL', '(sku LIKE ? OR name LIKE ? OR barcode LIKE ?)'];
   const params = [like, like, like];
   if (bu) {
     conditions.push(bu.clause);
@@ -131,7 +138,7 @@ export async function countSearch(db, q, buIds = null) {
 // anywhere still appears (COALESCE'd to 0) rather than silently vanishing.
 export async function findAllWithStockAtWarehouse(db, warehouseId, buIds = null) {
   const bu = directBuIdsCondition('i.bu_id', buIds);
-  const whereClause = bu ? `WHERE ${bu.clause}` : '';
+  const whereClause = `WHERE i.deleted_at IS NULL${bu ? ` AND ${bu.clause}` : ''}`;
   const [rows] = await db.execute(
     `SELECT i.id, i.sku, i.barcode, i.name, i.unit, i.min_stock, i.selling_price,
             COALESCE(s.quantity, 0) AS quantity
@@ -215,4 +222,62 @@ export async function countCostHistory(db, itemId, warehouseId) {
     [itemId, warehouseId]
   );
   return Number(rows[0].total);
+}
+
+// ---- Deletion (archive) ---------------------------------------------------------------------------
+
+// Quantity per warehouse for one item, locking those stock rows (FOR UPDATE) so a concurrent stock
+// movement can't change them between the "stock must be 0" check and the archive. Call inside a
+// transaction on a connection.
+export async function lockStockRows(connection, itemId) {
+  const [rows] = await connection.execute(
+    'SELECT warehouse_id, quantity FROM stocks WHERE item_id = ? FOR UPDATE',
+    [itemId]
+  );
+  return rows;
+}
+
+// Documents that still reference the item in a state somebody has to act on. Deleting the item out
+// from under one would leave a draft that can never be completed, so they block the deletion.
+// (A finished or cancelled document is history and does not block.)
+export async function findOpenDocumentsUsingItem(db, itemId, limit = 10) {
+  const [rows] = await db.execute(
+    `SELECT 'Barang masuk' AS label, t.transaction_number AS number, t.status
+       FROM inventory_transactions t JOIN inventory_transaction_details d ON d.transaction_id = t.id
+       WHERE d.item_id = ? AND t.status = 'DRAFT' AND t.type = 'INBOUND'
+     UNION ALL
+     SELECT 'Barang keluar', t.transaction_number, t.status
+       FROM inventory_transactions t JOIN inventory_transaction_details d ON d.transaction_id = t.id
+       WHERE d.item_id = ? AND t.status = 'DRAFT' AND t.type = 'OUTBOUND'
+     UNION ALL
+     SELECT 'Penjualan', i.invoice_number, i.status
+       FROM invoices i JOIN invoice_details d ON d.invoice_id = i.id
+       WHERE d.item_id = ? AND i.status = 'DRAFT' AND i.type = 'SALES'
+     UNION ALL
+     SELECT 'Pembelian', i.invoice_number, i.status
+       FROM invoices i JOIN invoice_details d ON d.invoice_id = i.id
+       WHERE d.item_id = ? AND i.status = 'DRAFT' AND i.type = 'PURCHASE'
+     UNION ALL
+     SELECT 'Transfer', t.transfer_number, t.status
+       FROM stock_transfers t JOIN stock_transfer_details d ON d.transfer_id = t.id
+       WHERE d.item_id = ? AND t.status IN ('DRAFT', 'APPROVED')
+     UNION ALL
+     SELECT 'Stok opname', o.opname_number, o.status
+       FROM stock_opnames o JOIN stock_opname_details d ON d.stock_opname_id = o.id
+       WHERE d.item_id = ? AND o.status IN ('DRAFT', 'SUBMITTED')
+     UNION ALL
+     SELECT 'Retur', r.return_number, r.status
+       FROM item_returns r JOIN item_return_details d ON d.return_id = r.id
+       WHERE d.item_id = ? AND r.status IN ('DRAFT', 'APPROVED')
+     LIMIT ?`,
+    [itemId, itemId, itemId, itemId, itemId, itemId, itemId, limit]
+  );
+  return rows;
+}
+
+export async function markDeleted(connection, id, userId = null) {
+  await connection.execute(
+    'UPDATE items SET deleted_at = CURRENT_TIMESTAMP(3), deleted_by = ?, updated_at = CURRENT_TIMESTAMP(3) WHERE id = ? AND deleted_at IS NULL',
+    [userId, id]
+  );
 }

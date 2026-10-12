@@ -9,6 +9,7 @@ import {
   getItemSchema,
   createItemSchema,
   updateItemSchema,
+  deleteItemSchema,
   searchItemsSchema,
   getItemByBarcodeSchema,
   importItemsSchema,
@@ -115,6 +116,10 @@ export async function itemsRoutes(app) {
       { ...request.body, bu_id: effectiveBuId(request) },
       request.userContext?.buIds
     );
+  });
+
+  app.delete('/:id', { onRequest: guard('items', 'write'), schema: deleteItemSchema }, async (request) => {
+    return service.deleteItem(app.db, request.params.id, request.userContext?.buIds, request.userContext?.userId);
   });
 
   app.get('/:id/stocks', { schema: listItemStocksSchema }, async (request) => {

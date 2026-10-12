@@ -27,7 +27,7 @@ vi.mock('../../src/shared/database/transaction.js', () => ({
   withTransaction: vi.fn((pool, work) => work({}))
 }));
 
-const fakePool = {};
+const fakePool = { execute: async () => [[]] }; // assertItemsInScope now always reads items (deleted-item check)
 
 function freshIdempotencyRecord() {
   idempotencyRepository.getOrCreate.mockImplementation(async (connection, { key, endpoint, requestHash }) => ({

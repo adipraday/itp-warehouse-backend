@@ -1,7 +1,8 @@
 import { buIdsCondition, assignedWarehouseCondition } from '../../shared/auth/bu-filter.js';
 
 export async function stockSummary(db, warehouseId, buIds = null, assignedWarehouseIds = null) {
-  const conditions = [];
+  // Deleted (archived) items are not part of the current stock picture.
+  const conditions = ['i.deleted_at IS NULL'];
   const params = [];
   if (warehouseId) {
     conditions.push('s.warehouse_id = ?');

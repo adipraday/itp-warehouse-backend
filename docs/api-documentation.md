@@ -200,6 +200,7 @@ warehouse utama = warehouse ini jadi **cabang**-nya. Aturan (lihat
 | GET | `/api/items/:id` | Detail |
 | POST | `/api/items` | Create → `201` |
 | PUT | `/api/items/:id` | Update (full replace) |
+| DELETE | `/api/items/:id` | **Hapus (arsip) item** (2026-10-12). Hanya `admin-bu`/`purchasing`/`super-admin`. Syarat: stok item = 0 di SEMUA gudang dan tidak dipakai dokumen yang belum selesai — lihat bagian "Menghapus item" di bawah |
 | GET | `/api/items/search?q=router` | Cari by SKU/nama/barcode (LIKE), paginated. **`q` wajib** |
 | GET | `/api/items/by-barcode/:barcode?warehouse_id=1` | **Baru 2026-09-13.** Lookup exact-match buat scanner POS. `warehouse_id` opsional — kalau dikirim, response ikut kasih stok item itu di warehouse tsb (`stock: {warehouse_id, quantity}`), jadi 1x request per scan. `404` kalau barcode tidak ketemu. |
 | GET | `/api/items/:id/stocks?warehouse_id=1` | Stok item lintas warehouse (filter `warehouse_id` opsional), paginated |
@@ -253,6 +254,16 @@ lain yang kebetulan punya barcode identik.
 **Object cost** (di `/:id/cost`): `item_id, warehouse_id, quantity_remaining, total_value, average_unit_cost`
 
 **Object cost-history entry**: `id, quantity_received, quantity_remaining, unit_cost, origin_cost_layer_id, created_at`
+
+### Menghapus item (`DELETE /api/items/:id`, baru 2026-10-12)
+
+Item **diarsipkan, bukan dihapus fisik** — stok, mutasi, cost layer, dan semua baris dokumen mengacunya (FK `RESTRICT`), jadi riwayat harus tetap utuh. Kolom baru `items.deleted_at`/`deleted_by`; item terarsip hilang dari semua daftar (`/items`, `/items/search`, scan barcode, export, daftar & hitungan stok, low/out-of-stock, dashboard) tetapi masih bisa dibuka lewat `GET /api/items/:id` (respons memuat `deleted_at`) supaya tautan dari dokumen lama tidak putus. SKU dan barcode-nya **bisa dipakai lagi** oleh item baru (kunci unik kini `(bu_id, sku, active_key)`; `active_key` NULL untuk item terarsip).
+
+Syarat (dicek dalam satu transaksi, baris stok item dikunci `FOR UPDATE`):
+- `409 ITEM_HAS_STOCK` — masih ada stok ≠ 0 di suatu gudang. `error.details` = `[{ warehouse_id, quantity }]` untuk gudang yang masih menyimpan.
+- `409 ITEM_IN_OPEN_DOCUMENTS` — item masih ada di dokumen yang belum selesai: draft (barang masuk/keluar, penjualan, pembelian), transfer `DRAFT`/`APPROVED`, opname `DRAFT`/`SUBMITTED`, retur `DRAFT`/`APPROVED`. `error.details` = `[{ type, number, status }]` (maks 10).
+- `404` — item tidak ada atau sudah dihapus (hapus ulang bukan sukses diam-diam). `403` — item milik BU lain.
+Sukses: `200 { data: { id, sku, deleted: true } }`. Item terarsip tidak bisa diubah (`PUT` → 404) dan tidak bisa dipakai di dokumen baru/diedit (`409 ITEM_DELETED`, berlaku juga untuk super-admin). Aksi tercatat di Activity Log sebagai `DELETE ITEM`.
 
 ### Import item + stok awal (`POST /api/items/import`, baru 2026-09-14)
 

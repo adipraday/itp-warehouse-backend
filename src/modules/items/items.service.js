@@ -1,6 +1,7 @@
 import { NotFoundError, ConflictError } from '../../shared/errors/app-error.js';
 import { parsePagination } from '../../shared/utils/pagination.js';
 import { assertRowInScope } from '../../shared/auth/master-data-scope.js';
+import { withTransaction } from '../../shared/database/transaction.js';
 import * as repository from './items.repository.js';
 import * as stocksRepository from '../inventory/stocks/stocks.repository.js';
 
@@ -50,7 +51,7 @@ export async function createItem(db, payload, userId = null) {
 
 export async function updateItem(db, id, payload, buIds = null) {
   const existing = await repository.findById(db, id);
-  if (!existing) throw new NotFoundError(`Item ${id} not found`);
+  if (!existing || existing.deleted_at) throw new NotFoundError(`Item ${id} not found`);
   assertRowInScope(existing, buIds, 'item');
 
   const buId = payload.bu_id ?? existing.bu_id;
@@ -66,6 +67,41 @@ export async function updateItem(db, id, payload, buIds = null) {
 
   const item = await repository.update(db, id, payload);
   return { data: item };
+}
+
+// Deletes (archives) an item. Allowed only when every warehouse holds 0 of it and no unfinished
+// document still uses it; the row is kept (stock history, documents and cost layers point at it) but
+// disappears from every list, picker and scan, and its SKU/barcode become reusable. The stock check
+// runs under a row lock on the item's stock rows, so a concurrent movement can't slip past it.
+export async function deleteItem(pool, id, buIds = null, userId = null) {
+  const existing = await repository.findById(pool, id);
+  if (!existing || existing.deleted_at) throw new NotFoundError(`Item ${id} not found`);
+  assertRowInScope(existing, buIds, 'item');
+
+  await withTransaction(pool, async (connection) => {
+    const stockRows = await repository.lockStockRows(connection, id);
+    const withStock = stockRows.filter((row) => Number(row.quantity) !== 0);
+    if (withStock.length > 0) {
+      throw new ConflictError(
+        'ITEM_HAS_STOCK',
+        `Item "${existing.sku}" still has stock; every warehouse must be at 0 before it can be deleted`,
+        withStock.map((row) => ({ warehouse_id: Number(row.warehouse_id), quantity: Number(row.quantity) }))
+      );
+    }
+
+    const openDocuments = await repository.findOpenDocumentsUsingItem(connection, id);
+    if (openDocuments.length > 0) {
+      throw new ConflictError(
+        'ITEM_IN_OPEN_DOCUMENTS',
+        `Item "${existing.sku}" is still used by documents that are not finished`,
+        openDocuments.map((doc) => ({ type: doc.label, number: doc.number, status: doc.status }))
+      );
+    }
+
+    await repository.markDeleted(connection, id, userId);
+  });
+
+  return { data: { id: Number(id), sku: existing.sku, deleted: true } };
 }
 
 // The core POS lookup: scan -> exact-match resolve. Optionally enriched with

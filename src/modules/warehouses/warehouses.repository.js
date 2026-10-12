@@ -96,7 +96,7 @@ export async function findStocksByWarehouse(db, warehouseId, { limit, offset }) 
     `SELECT i.id AS item_id, i.sku, i.name, i.unit, s.quantity, i.min_stock, s.updated_at
      FROM stocks s
      JOIN items i ON i.id = s.item_id
-     WHERE s.warehouse_id = ?
+     WHERE s.warehouse_id = ? AND i.deleted_at IS NULL
      ORDER BY i.name ASC
      LIMIT ? OFFSET ?`,
     [warehouseId, limit, offset]
@@ -105,7 +105,7 @@ export async function findStocksByWarehouse(db, warehouseId, { limit, offset }) 
 }
 
 export async function countStocksByWarehouse(db, warehouseId) {
-  const [rows] = await db.execute('SELECT COUNT(*) AS total FROM stocks WHERE warehouse_id = ?', [warehouseId]);
+  const [rows] = await db.execute('SELECT COUNT(*) AS total FROM stocks s JOIN items i ON i.id = s.item_id WHERE s.warehouse_id = ? AND i.deleted_at IS NULL', [warehouseId]);
   return Number(rows[0].total);
 }
 
@@ -118,7 +118,7 @@ export async function stockSummary(db, warehouseId) {
        COALESCE(SUM(CASE WHEN s.quantity = 0 THEN 1 ELSE 0 END), 0) AS out_of_stock_count
      FROM stocks s
      JOIN items i ON i.id = s.item_id
-     WHERE s.warehouse_id = ?`,
+     WHERE s.warehouse_id = ? AND i.deleted_at IS NULL`,
     [warehouseId]
   );
   const row = rows[0];

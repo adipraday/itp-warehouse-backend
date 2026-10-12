@@ -36,10 +36,20 @@ describe('assertRowInScope', () => {
 });
 
 describe('assertItemsInScope', () => {
-  it('is a no-op for buIds null (super-admin)', async () => {
-    const db = makeDb([]);
+  it('applies no business-unit restriction to buIds null (super-admin)', async () => {
+    const db = makeDb([{ id: 1, bu_id: 99, deleted_at: null }]);
     await expect(assertItemsInScope(db, [1, 2], null)).resolves.toBeUndefined();
-    expect(db.execute).not.toHaveBeenCalled();
+  });
+
+  // Deleted (archived) items stay in the table for history but can't go on a new or edited document.
+  it('rejects a deleted item with 409 ITEM_DELETED, for super-admin and scoped callers alike', async () => {
+    const rows = [{ id: 5, bu_id: 11, deleted_at: '2026-10-12 10:00:00.000' }];
+    for (const buIds of [null, [11]]) {
+      await expect(assertItemsInScope(makeDb(rows), [5], buIds)).rejects.toMatchObject({
+        statusCode: 409,
+        code: 'ITEM_DELETED'
+      });
+    }
   });
 
   it('is a no-op when itemIds is empty or all nullish', async () => {

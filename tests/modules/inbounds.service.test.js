@@ -15,7 +15,7 @@ vi.mock('../../src/shared/database/transaction.js', () => ({
   withTransaction: vi.fn((pool, work) => work({}))
 }));
 
-const fakePool = {};
+const fakePool = { execute: async () => [[]] }; // assertItemsInScope now always reads items (deleted-item check)
 
 function freshIdempotencyRecord() {
   idempotencyRepository.getOrCreate.mockImplementation(async (connection, { key, endpoint, requestHash }) => ({
@@ -263,8 +263,8 @@ describe('inbounds.service — item/contact bu_id scoping', () => {
     await expect(service.createInbound(pool, payload, null, [11])).resolves.toMatchObject({ data: { id: 1 } });
   });
 
-  it('is unrestricted for super-admin (buIds null) — never even queries items/contacts', async () => {
-    const pool = { execute: vi.fn() };
+  it('is unrestricted for super-admin (buIds null) — only checks that the items are not deleted', async () => {
+    const pool = { execute: vi.fn().mockResolvedValue([[]]) };
     repository.insertHeader.mockResolvedValue(1);
     repository.insertDetails.mockResolvedValue();
     repository.findByIdWithDetails.mockResolvedValue({ id: 1 });
@@ -272,6 +272,8 @@ describe('inbounds.service — item/contact bu_id scoping', () => {
 
     await service.createInbound(pool, payload, null, null);
 
-    expect(pool.execute).not.toHaveBeenCalled();
+    // One read of the items (deleted check); contacts are never queried without a scope.
+    expect(pool.execute).toHaveBeenCalledTimes(1);
+    expect(pool.execute.mock.calls[0][0]).toContain('FROM items');
   });
 });
