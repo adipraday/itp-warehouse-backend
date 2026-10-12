@@ -63,10 +63,9 @@ const MATRIX = {
   // own BU's assignments (enforced by buScope()/assertRowInScope() in the
   // routes, not here); super-admin bypasses via the can() short-circuit above.
   'user-warehouse-assignments': { write: ['admin-bu'] },
-  // `write` = edit an existing item. `create` (2026-10-12, requested to keep item master data
-  // consistent) = add a NEW item, including the bulk import: only admin-bu and purchasing.
-  // admin-warehouse can still edit items but no longer creates them.
-  items: { write: ['admin-bu', 'admin-warehouse', 'purchasing'], create: ['admin-bu', 'purchasing'] },
+  // Item master data (2026-10-12, requested to keep it consistent): only admin-bu and purchasing may
+  // add, import or edit items. admin-warehouse and the other staff roles can read and use them only.
+  items: { write: ['admin-bu', 'purchasing'] },
   contacts: { write: ['admin-bu', 'admin-warehouse', 'kasir-sales', 'purchasing'] },
 
   inbounds: { write: [...ALL_STAFF, 'purchasing'] },

@@ -39,30 +39,22 @@ describe('role-matrix can()', () => {
   });
 });
 
-// Adding a NEW item (POST /items and the bulk import) is limited to admin-bu and purchasing, so the
-// item master data stays consistent. Editing an existing item keeps its wider list.
-describe('items: create vs write', () => {
-  it('lets only super-admin, admin-bu and purchasing create items', () => {
+// Item master data (add, import, edit) is limited to admin-bu and purchasing so it stays consistent.
+describe('items: master data write access', () => {
+  it('lets only super-admin, admin-bu and purchasing add or edit items', () => {
     const allowed = ['super-admin', 'admin-bu', 'purchasing'];
-    for (const role of ROLES) {
-      expect(can(role, 'items', 'create'), role).toBe(allowed.includes(role));
-    }
-  });
-
-  it('keeps edit (write) open to admin-warehouse as before', () => {
-    const allowed = ['super-admin', 'admin-bu', 'admin-warehouse', 'purchasing'];
     for (const role of ROLES) {
       expect(can(role, 'items', 'write'), role).toBe(allowed.includes(role));
     }
   });
 
-  it('guard() rejects creating an item for admin-warehouse, kasir-sales and staff-gudang, but not for purchasing', async () => {
-    const reject = async (role) => guard('items', 'create')({ userContext: { userId: 1, role } });
+  it('guard() rejects admin-warehouse, staff-gudang, kasir-sales, finance and owner, but not purchasing or admin-bu', async () => {
+    const check = async (role) => guard('items', 'write')({ userContext: { userId: 1, role } });
     for (const role of ['admin-warehouse', 'kasir-sales', 'staff-gudang', 'finance', 'owner']) {
-      await expect(reject(role), role).rejects.toMatchObject({ statusCode: 403 });
+      await expect(check(role), role).rejects.toMatchObject({ statusCode: 403 });
     }
-    await expect(reject('purchasing')).resolves.toBeUndefined();
-    await expect(reject('admin-bu')).resolves.toBeUndefined();
+    await expect(check('purchasing')).resolves.toBeUndefined();
+    await expect(check('admin-bu')).resolves.toBeUndefined();
   });
 });
 
@@ -91,20 +83,14 @@ describe('admin-warehouse role (full write, approve only for stock-transfers)', 
     expect(HPP_VISIBLE_ROLES).toContain('admin-warehouse');
   });
 
-  it('can write every day-to-day operational resource', () => {
+  it('can write every day-to-day operational resource except item master data', () => {
     const resources = [
-      'items', 'contacts', 'inbounds', 'outbounds', 'stock-transfers',
+      'contacts', 'inbounds', 'outbounds', 'stock-transfers',
       'stock-opnames', 'returns', 'sales', 'cash-sessions', 'purchases', 'payments'
     ];
     for (const resource of resources) {
       expect(can('admin-warehouse', resource, 'write')).toBe(true);
     }
-  });
-
-  // 2026-10-12: only admin-bu and purchasing add new items (keeps item master data consistent).
-  it('can edit items but is no longer allowed to create them', () => {
-    expect(can('admin-warehouse', 'items', 'write')).toBe(true);
-    expect(can('admin-warehouse', 'items', 'create')).toBe(false);
   });
 
   it('may approve stock-transfers (receiving side) - the only approve it has', () => {
