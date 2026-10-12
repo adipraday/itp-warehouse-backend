@@ -286,7 +286,7 @@ ada perubahan dari versi best-guess sebelumnya:
 | Resource | write | sub-action |
 |---|---|---|
 | warehouses | admin-bu | — |
-| items | admin-bu, purchasing | — |
+| items | admin-bu, purchasing (+ admin-warehouse untuk **mengubah** item yang sudah ada; sejak 2026-10-12 admin-warehouse tidak lagi boleh **menambah** item baru, termasuk import — aksi `create` di role-matrix.js) | — |
 | contacts | admin-bu, kasir-sales, purchasing | — |
 | inbounds | admin-bu, staff-gudang, purchasing | — |
 | outbounds | admin-bu, staff-gudang, kasir-sales | — |

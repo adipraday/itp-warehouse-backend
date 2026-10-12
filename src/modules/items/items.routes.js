@@ -67,7 +67,7 @@ export async function itemsRoutes(app) {
   });
 
   // Must be registered before /:id — same reasoning as /search and /by-barcode.
-  app.post('/import', { onRequest: guard('items', 'write'), schema: importItemsSchema }, async (request) => {
+  app.post('/import', { onRequest: guard('items', 'create'), schema: importItemsSchema }, async (request) => {
     const file = await request.file();
     if (!file) throw new BadRequestError('FILE_REQUIRED', 'Upload a .csv or .xlsx file under the "file" field');
     const buffer = await file.toBuffer();
@@ -98,7 +98,7 @@ export async function itemsRoutes(app) {
     return service.getItem(app.db, request.params.id, request.userContext?.buIds);
   });
 
-  app.post('/', { onRequest: guard('items', 'write'), schema: createItemSchema }, async (request, reply) => {
+  app.post('/', { onRequest: guard('items', 'create'), schema: createItemSchema }, async (request, reply) => {
     const result = await service.createItem(
       app.db,
       { ...request.body, bu_id: effectiveBuId(request) },

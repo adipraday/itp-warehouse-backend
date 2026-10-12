@@ -39,6 +39,33 @@ describe('role-matrix can()', () => {
   });
 });
 
+// Adding a NEW item (POST /items and the bulk import) is limited to admin-bu and purchasing, so the
+// item master data stays consistent. Editing an existing item keeps its wider list.
+describe('items: create vs write', () => {
+  it('lets only super-admin, admin-bu and purchasing create items', () => {
+    const allowed = ['super-admin', 'admin-bu', 'purchasing'];
+    for (const role of ROLES) {
+      expect(can(role, 'items', 'create'), role).toBe(allowed.includes(role));
+    }
+  });
+
+  it('keeps edit (write) open to admin-warehouse as before', () => {
+    const allowed = ['super-admin', 'admin-bu', 'admin-warehouse', 'purchasing'];
+    for (const role of ROLES) {
+      expect(can(role, 'items', 'write'), role).toBe(allowed.includes(role));
+    }
+  });
+
+  it('guard() rejects creating an item for admin-warehouse, kasir-sales and staff-gudang, but not for purchasing', async () => {
+    const reject = async (role) => guard('items', 'create')({ userContext: { userId: 1, role } });
+    for (const role of ['admin-warehouse', 'kasir-sales', 'staff-gudang', 'finance', 'owner']) {
+      await expect(reject(role), role).rejects.toMatchObject({ statusCode: 403 });
+    }
+    await expect(reject('purchasing')).resolves.toBeUndefined();
+    await expect(reject('admin-bu')).resolves.toBeUndefined();
+  });
+});
+
 describe('HPP_VISIBLE_ROLES', () => {
   it('excludes staff-gudang and kasir-sales, per the 2026-08-28 decision', () => {
     expect(HPP_VISIBLE_ROLES).not.toContain('staff-gudang');
@@ -72,6 +99,12 @@ describe('admin-warehouse role (full write, approve only for stock-transfers)', 
     for (const resource of resources) {
       expect(can('admin-warehouse', resource, 'write')).toBe(true);
     }
+  });
+
+  // 2026-10-12: only admin-bu and purchasing add new items (keeps item master data consistent).
+  it('can edit items but is no longer allowed to create them', () => {
+    expect(can('admin-warehouse', 'items', 'write')).toBe(true);
+    expect(can('admin-warehouse', 'items', 'create')).toBe(false);
   });
 
   it('may approve stock-transfers (receiving side) - the only approve it has', () => {
