@@ -1,0 +1,2 @@
+# Skrip yang dijalankan di server Linux harus berakhir baris LF (CRLF membuat "bash: No such file")
+*.sh text eol=lf
