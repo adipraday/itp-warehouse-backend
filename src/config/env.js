@@ -36,7 +36,15 @@ const schema = {
     // summarises yesterday (WIB). OWNER_DIGEST_ENABLED=false switches the scheduler off entirely;
     // OWNER_DIGEST_HOUR (0-23, WIB) is the earliest hour it will send.
     OWNER_DIGEST_ENABLED: { type: 'boolean', default: true },
-    OWNER_DIGEST_HOUR: { type: 'integer', default: 7, minimum: 0, maximum: 23 }
+    OWNER_DIGEST_HOUR: { type: 'integer', default: 7, minimum: 0, maximum: 23 },
+    // Cloudflare R2 (S3-compatible) bucket for uploaded documents — supplier invoice PDFs. All four
+    // credentials must be set to enable uploads; otherwise the upload/download endpoints answer 503.
+    // R2_ENDPOINT is optional (defaults to https://<account>.r2.cloudflarestorage.com).
+    R2_ACCOUNT_ID: { type: 'string', default: '' },
+    R2_ACCESS_KEY_ID: { type: 'string', default: '' },
+    R2_SECRET_ACCESS_KEY: { type: 'string', default: '' },
+    R2_BUCKET: { type: 'string', default: '' },
+    R2_ENDPOINT: { type: 'string', default: '' }
   }
 };
 

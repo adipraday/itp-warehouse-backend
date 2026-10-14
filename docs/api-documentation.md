@@ -712,21 +712,68 @@ lihat §17 Payments buat detail `amount_tendered`/`change_amount`.
 
 ## 15. Purchases
 
-Purchase = invoice bertipe `PURCHASE` (bukan purchase order — langsung jadi dokumen penerimaan barang saat completed).
+Purchase = invoice bertipe `PURCHASE`. **Sejak 2026-10-14 stok tidak lagi bertambah saat "complete" oleh pembuatnya** — pembelian harus dibayar, diajukan ke gudang tujuan, lalu **disetujui admin-warehouse tujuan** (atau admin-bu) dengan jumlah yang benar-benar diterima.
+
+### Alur
+
+```
+DRAFT ──bayar──▶ DRAFT(lunas) ──submit──▶ PENDING_APPROVAL ──receive──▶ COMPLETED
+                                              │  receive sebagian + WAIT   ▲
+                                              ▼                            │ receive sisa
+                                       PARTIALLY_RECEIVED ─────────────────┘
+        batal (dibayar/diajukan) ─▶ CANCELLED / COMPLETED (sisa ditutup) ─▶ refund_due ─▶ catat refund
+```
+
+`status` tetap `DRAFT | COMPLETED | CANCELLED`; tahap persetujuan ada di field **`receipt_status`** (`null` = belum diajukan, `PENDING_APPROVAL`, `PARTIALLY_RECEIVED`). Tidak ada status baru, jadi semua laporan/filter lama tetap berlaku.
 
 | Method | Path | Keterangan |
 |---|---|---|
-| GET | `/api/purchases?warehouse_id=1&status=DRAFT` | List |
-| GET | `/api/purchases/:id` | Detail |
-| POST | `/api/purchases` | Create DRAFT → `201` |
-| PUT | `/api/purchases/:id` | Update — hanya DRAFT |
-| DELETE | `/api/purchases/:id` | Hapus — hanya DRAFT |
-| POST | `/api/purchases/:id/complete` | DRAFT → COMPLETED. **Butuh `Idempotency-Key`** |
-| POST | `/api/purchases/:id/cancel` | DRAFT → CANCELLED |
+| GET | `/api/purchases?warehouse_id=1&status=DRAFT&receipt_status=PENDING_APPROVAL` | List |
+| GET | `/api/purchases/:id` | Detail + `details` (dengan `received_quantity`/`closed_quantity`), `receipts`, `refunds` |
+| POST | `/api/purchases` | Create DRAFT → `201`. Body boleh memuat `supplier_invoice_number` |
+| PUT | `/api/purchases/:id` | Update — hanya DRAFT, belum dibayar, belum diajukan (`409 PURCHASE_LOCKED`) |
+| DELETE | `/api/purchases/:id` | Hapus — syarat sama dengan PUT |
+| POST | `/api/payments` | Bayar ke supplier — untuk PURCHASE boleh saat DRAFT |
+| POST | `/api/purchases/:id/submit` | DRAFT → diajukan ke gudang (`receipt_status=PENDING_APPROVAL`). Wajib lunas (`409 PAYMENT_REQUIRED`) |
+| POST | `/api/purchases/:id/receive` | **Persetujuan gudang**: stok bertambah. **Butuh `Idempotency-Key`**. Role: admin-warehouse (gudang tujuan, bukan pembuatnya) / admin-bu |
+| POST | `/api/purchases/:id/complete` | Sama dengan `receive` tanpa `lines` (terima semua sisa). Tetap butuh sudah diajukan (`409 APPROVAL_REQUIRED`) |
+| POST | `/api/purchases/:id/cancel` | Body `{ "reason": "..." }`; alasan wajib bila sudah dibayar/diajukan |
+| POST | `/api/purchases/:id/refunds` | Catat uang kembali dari supplier. Role: admin-bu, admin-warehouse, finance |
+| PUT | `/api/purchases/:id/supplier-invoice` | Body `{ "supplier_invoice_number": "..." \| null }` |
+| POST | `/api/purchases/:id/supplier-invoice-file` | `multipart/form-data`, field `file` (PDF ≤ 10 MB) |
+| GET | `/api/purchases/:id/supplier-invoice-file` | Unduh PDF (`application/pdf`) — pakai Bearer token, bukan link publik |
+| DELETE | `/api/purchases/:id/supplier-invoice-file` | Hapus PDF |
 
-Body dan struktur object identik dengan Sales (lihat di atas), bedanya `type: "PURCHASE"` dan prefix nomor dokumen `PUR-`.
+### `POST /:id/receive`
 
-**Efek `complete`:** membuat & menyelesaikan **1 transaksi INBOUND baru** yang ter-link, membuat `stock mutation IN` + `cost layer` FIFO baru per item (persis seperti inbound biasa). Tidak ada pembekuan `unit_cost`/`cost_amount` pada detail (field itu khusus untuk SALES).
+```json
+{
+  "lines": [{ "item_id": 1, "quantity": 6 }],
+  "shortfall_action": "WAIT",
+  "notes": "4 dus rusak"
+}
+```
+
+- `lines` dihilangkan = semua sisa diterima penuh. Item yang tidak disebut = 0 diterima. Minimal satu item > 0 (`400 NOTHING_RECEIVED`); untuk menolak seluruh kiriman gunakan `cancel`.
+- Jumlah > sisa → `409 RECEIVED_QUANTITY_EXCEEDS_ORDERED`.
+- Bila masih ada yang kurang, **`shortfall_action` wajib** (`400 SHORTFALL_ACTION_REQUIRED`):
+  - `WAIT` — tunggu barang pengganti dari supplier (retur/penggantian). Status jadi `PARTIALLY_RECEIVED`; panggil `receive` lagi saat pengganti tiba.
+  - `REFUND` — tutup kekurangan: `closed_quantity` diisi, **total pembelian dihitung ulang** dari yang benar-benar dibeli, pembelian menjadi `COMPLETED`, dan kelebihan bayar menjadi `refund_due`.
+- Efek stok per penerimaan: 1 transaksi INBOUND baru (tercatat di `receipts[]`), `stock mutation IN` + cost layer FIFO per item yang diterima.
+- admin-warehouse: wajib ter-assign ke gudang pembelian dan tidak boleh menyetujui pembelian buatannya sendiri (`403`).
+
+### Pembatalan & pengembalian dana
+
+- Belum dibayar dan belum diajukan: dibatalkan seperti dulu (`CANCELLED`).
+- Dibayar / diajukan: alasan wajib. Semua sisa ditutup; tak ada yang diterima → `CANCELLED`, sebagian sudah diterima → `COMPLETED` dengan total sesuai yang diterima.
+- `refund_due = max(0, paid_amount − total_amount − refunded_amount)` ada di setiap response. `POST /:id/refunds` (`amount`, `refund_method`, `refund_date`, `notes`) ditolak `409 AMOUNT_EXCEEDS_REFUND_DUE` bila melebihi itu, dan `409 INVALID_STATUS` bila pembelian belum `COMPLETED`/`CANCELLED`. Nomor `REF-000001`.
+- Refund disimpan di tabel `purchase_refunds`, terpisah dari `payments`, sehingga rekap pembayaran dan rekonsiliasi kas shift tidak tersentuh.
+
+### Invoice asli supplier
+
+Nomor (`supplier_invoice_number`, opsional, maks. 100 karakter) dan PDF-nya. PDF disimpan di **Cloudflare R2** lewat API (bucket privat; tidak ada URL publik). Tipe divalidasi dua kali (MIME dan byte awal `%PDF-`). Env `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` harus terisi; bila tidak, endpoint file menjawab `503 STORAGE_NOT_CONFIGURED` dan fitur lain tetap jalan.
+
+Body dan struktur object lain identik dengan Sales (lihat di atas), bedanya `type: "PURCHASE"` dan prefix nomor dokumen `PUR-`.
 
 ---
 
@@ -1031,8 +1078,11 @@ buat preview "kalau ditutup sekarang" selagi masih OPEN).
 ## 21. Alur Kerja Umum (Workflow Examples)
 
 ### A. Menerima barang dari supplier (Purchase)
-1. `POST /api/purchases` → dapat `id` DRAFT
-2. `POST /api/purchases/:id/complete` (+ header `Idempotency-Key`) → stok bertambah, FIFO layer baru terbentuk
+1. `POST /api/purchases` → dapat `id` DRAFT (opsional: `supplier_invoice_number`, lalu unggah PDF)
+2. `POST /api/payments` → bayar sampai lunas
+3. `POST /api/purchases/:id/submit` → diajukan ke gudang tujuan
+4. `POST /api/purchases/:id/receive` (+ header `Idempotency-Key`) oleh admin-warehouse tujuan → stok bertambah, FIFO layer baru terbentuk. Kekurangan: `WAIT` (tunggu pengganti) atau `REFUND` (tutup + minta dana kembali)
+5. Bila ada `refund_due`: `POST /api/purchases/:id/refunds` saat uang kembali
 
 ### B. Menjual barang ke customer (Sales / POS)
 1. `GET /api/items/search?q=...` → cari item

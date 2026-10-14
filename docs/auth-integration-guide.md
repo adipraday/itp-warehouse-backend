@@ -294,7 +294,7 @@ ada perubahan dari versi best-guess sebelumnya:
 | stock-opnames | admin-bu, staff-gudang | submit: admin-bu, staff-gudang; approve: admin-bu |
 | returns | admin-bu, staff-gudang, kasir-sales | approve/reject: admin-bu |
 | sales | admin-bu, kasir-sales | — |
-| purchases | admin-bu, purchasing | — |
+| purchases | admin-bu, admin-warehouse, purchasing | approve (terima barang): admin-bu, admin-warehouse · refund: admin-bu, admin-warehouse, finance |
 | payments | admin-bu, finance | — |
 
 `super-admin` bisa semua, di semua resource (bypass di `can()`). Resource read-only

@@ -31,6 +31,7 @@ import { dashboardRoutes } from './modules/dashboard/dashboard.routes.js';
 import { deviceTokensRoutes } from './modules/device-tokens/device-tokens.routes.js';
 import { notificationsRoutes } from './modules/notifications/notifications.routes.js';
 import { initFirebaseMessaging } from './shared/notifications/firebase-admin.js';
+import { createObjectStorage } from './shared/storage/object-storage.js';
 
 export async function buildApp({ logger = true } = {}) {
   const app = Fastify({ logger });
@@ -63,6 +64,8 @@ export async function buildApp({ logger = true } = {}) {
 
   const pool = createPool(app.config);
   app.decorate('db', pool);
+  // null when the R2_* variables are not set — see shared/storage/object-storage.js.
+  app.decorate('storage', createObjectStorage(app.config));
   app.addHook('onClose', async () => pool.end());
   app.setErrorHandler(errorHandler);
 

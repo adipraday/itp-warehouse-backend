@@ -68,8 +68,16 @@ export async function createPayment(pool, payload, userId = null) {
   const id = await withTransaction(pool, async (connection) => {
     const invoice = await invoicesRepository.findByIdForUpdate(connection, payload.invoice_id);
     if (!invoice) throw new NotFoundError(`Invoice ${payload.invoice_id} not found`);
-    if (invoice.status !== 'COMPLETED') {
-      throw new ConflictError('INVALID_STATUS', 'Payments can only be posted against a COMPLETED invoice');
+    // A PURCHASE is paid BEFORE the goods are approved into stock (2026-10-14), so its payments are
+    // also accepted while it is still a DRAFT (its totals are locked once a payment exists).
+    const payable = invoice.status === 'COMPLETED' || (invoice.type === 'PURCHASE' && invoice.status === 'DRAFT');
+    if (!payable) {
+      throw new ConflictError(
+        'INVALID_STATUS',
+        invoice.type === 'PURCHASE'
+          ? 'Payments can only be posted against a DRAFT or COMPLETED purchase'
+          : 'Payments can only be posted against a COMPLETED invoice'
+      );
     }
     paidInvoice = invoice;
 

@@ -78,7 +78,15 @@ const MATRIX = {
   sales: { write: ['admin-bu', 'admin-warehouse', 'kasir-sales'] },
   // Cash session / shift (2026-09-13) — whoever runs the register opens/closes it.
   'cash-sessions': { write: ['admin-bu', 'admin-warehouse', 'kasir-sales'] },
-  purchases: { write: ['admin-bu', 'admin-warehouse', 'purchasing'] },
+  // approve = accept goods into stock (2026-10-14): the destination warehouse's admin-warehouse, or
+  // admin-bu. Per purchase, an admin-warehouse must be assigned to that warehouse (buScope) and may
+  // not approve a purchase they created themselves (purchases.service.assertMayReceivePurchase).
+  // refund = record money coming back from the supplier.
+  purchases: {
+    write: ['admin-bu', 'admin-warehouse', 'purchasing'],
+    approve: ['admin-bu', 'admin-warehouse'],
+    refund: ['admin-bu', 'admin-warehouse', 'finance']
+  },
   // kasir-sales added 2026-09-13 — needed for the cash-session feature to be
   // usable at an actual register: a cashier who can create/complete a sale
   // but couldn't also record its payment made the register workflow require
