@@ -11,7 +11,7 @@ import * as stockMutationsRepository from '../inventory/stock-mutations/stock-mu
 import * as costLayersRepository from '../inventory/costing/cost-layers.repository.js';
 import * as warehousesRepository from '../warehouses/warehouses.repository.js';
 import { assertItemsInScope, assertContactInScope } from '../../shared/auth/master-data-scope.js';
-import { notifyStakeholders } from '../../shared/notifications/push.js';
+import { notifyStakeholders, notifyUsers } from '../../shared/notifications/push.js';
 
 const MAX_SUPPLIER_INVOICE_BYTES = 10 * 1024 * 1024;
 
@@ -213,6 +213,31 @@ async function notifyRefundDue(pool, purchase, refundDue, headline) {
   }
 }
 
+// Tells whoever created the purchase that the warehouse has approved a receipt, so they do not have to
+// keep opening the document to see whether the goods arrived. Skipped when the creator is the one who
+// approved (nothing to tell). Best-effort: never fails a receipt that already committed.
+async function notifyPurchaseCreator(pool, purchase, summary, approverId) {
+  if (purchase.created_by == null || Number(purchase.created_by) === Number(approverId)) return;
+  let body;
+  if (summary.outstanding === 0) {
+    body = `Barang pembelian ${purchase.invoice_number} sudah diterima di gudang dan masuk stok.`;
+  } else if (summary.shortfallAction === 'REFUND') {
+    body = `Pembelian ${purchase.invoice_number} diterima sebagian (${summary.received} unit). Sisa ${summary.outstanding} unit ditutup dan dananya diminta kembali dari supplier.`;
+  } else {
+    body = `Pembelian ${purchase.invoice_number} diterima sebagian (${summary.received} unit). Sisa ${summary.outstanding} unit menunggu pengganti dari supplier.`;
+  }
+  try {
+    await notifyUsers(pool, {
+      userIds: [Number(purchase.created_by)],
+      title: 'Barang Pembelian Diterima',
+      body,
+      data: { type: 'purchase', id: purchase.id }
+    });
+  } catch (error) {
+    console.warn('[push] purchase received notification failed', { id: purchase.id, error: error.message });
+  }
+}
+
 // Step 3: the destination warehouse approves what was actually received. Only the received quantities
 // go into stock (with their own FIFO cost layers). What is still missing is either awaited (the
 // supplier replaces it — retur/penggantian) or closed out, in which case the supplier owes a refund.
@@ -223,6 +248,7 @@ export async function receivePurchase(pool, id, options) {
   const { idempotencyKey, endpoint, body, ttlHours, userId = null, context = null, lines, shortfallAction, notes = null } = options;
   let closedOut = null;
   let headerForNotify = null;
+  let receiptSummary = null;
 
   const result = await withTransaction(pool, (connection) =>
     withIdempotency(connection, { key: idempotencyKey, endpoint, body, ttlHours }, async () => {
@@ -339,11 +365,19 @@ export async function receivePurchase(pool, id, options) {
       }
 
       headerForNotify = purchase;
+      receiptSummary = {
+        received: receivedDetails.reduce((sum, d) => sum + received.get(d.item_id), 0),
+        outstanding: outstandingAfter,
+        shortfallAction: hasShortfall ? shortfallAction : null
+      };
       const updated = await repository.findByIdWithDetails(connection, id);
       return { statusCode: 200, body: { data: updated } };
     })
   );
 
+  if (!result.replayed && receiptSummary) {
+    await notifyPurchaseCreator(pool, headerForNotify, receiptSummary, userId);
+  }
   if (!result.replayed && closedOut) {
     await notifyRefundDue(pool, headerForNotify, Math.max(0, closedOut.paid - closedOut.total), 'Kekurangan barang pada');
   }

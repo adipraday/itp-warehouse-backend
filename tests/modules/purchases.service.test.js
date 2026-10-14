@@ -8,6 +8,7 @@ import * as costLayersRepository from '../../src/modules/inventory/costing/cost-
 import * as warehousesRepository from '../../src/modules/warehouses/warehouses.repository.js';
 import * as idempotencyRepository from '../../src/shared/idempotency/idempotency.repository.js';
 import * as service from '../../src/modules/purchases/purchases.service.js';
+import { notifyUsers } from '../../src/shared/notifications/push.js';
 
 vi.mock('../../src/modules/purchases/purchases.repository.js');
 vi.mock('../../src/modules/invoices/invoices.repository.js');
@@ -17,7 +18,10 @@ vi.mock('../../src/modules/inventory/stock-mutations/stock-mutations.repository.
 vi.mock('../../src/modules/inventory/costing/cost-layers.repository.js');
 vi.mock('../../src/modules/warehouses/warehouses.repository.js');
 vi.mock('../../src/shared/idempotency/idempotency.repository.js');
-vi.mock('../../src/shared/notifications/push.js', () => ({ notifyStakeholders: vi.fn().mockResolvedValue() }));
+vi.mock('../../src/shared/notifications/push.js', () => ({
+  notifyStakeholders: vi.fn().mockResolvedValue(),
+  notifyUsers: vi.fn().mockResolvedValue()
+}));
 vi.mock('../../src/shared/database/transaction.js', () => ({
   withTransaction: vi.fn((pool, work) => work({}))
 }));
@@ -269,6 +273,72 @@ describe('purchases.service — receive (warehouse approval)', () => {
       context: { role: 'admin-bu', userId: 9, assignedWarehouseIds: null }
     });
     expect(byAdminBu.statusCode).toBe(200);
+  });
+});
+
+describe('purchases.service — notifying the purchase creator on receipt', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    warehousesRepository.findById.mockResolvedValue({ id: 1, bu_id: 1 });
+    mockStockPosting();
+    repository.findDetailsForUpdate.mockImplementation(async () => [detail()]);
+    repository.addClosedQuantity.mockResolvedValue();
+    repository.computeAndStoreTotals.mockResolvedValue(300000);
+    repository.sumPaid.mockResolvedValue(500000);
+    repository.setCancelReason.mockResolvedValue();
+    invoicesRepository.updatePaymentStatus.mockResolvedValue();
+    freshIdempotencyRecord();
+    repository.findByIdForUpdate.mockResolvedValue(submittedPurchase({ created_by: 5 }));
+  });
+
+  it('tells the creator when everything was received', async () => {
+    await service.receivePurchase(fakePool, 1, { ...baseOptions, userId: 9 });
+
+    expect(notifyUsers).toHaveBeenCalledWith(
+      fakePool,
+      expect.objectContaining({
+        userIds: [5],
+        title: 'Barang Pembelian Diterima',
+        body: expect.stringContaining('sudah diterima di gudang dan masuk stok'),
+        data: { type: 'purchase', id: 1 }
+      })
+    );
+  });
+
+  it('says what is left when only part arrived (waiting vs refund)', async () => {
+    await service.receivePurchase(fakePool, 1, {
+      ...baseOptions,
+      userId: 9,
+      lines: [{ item_id: 1, quantity: 6 }],
+      shortfallAction: 'WAIT'
+    });
+    expect(notifyUsers.mock.calls[0][1].body).toContain('diterima sebagian (6 unit)');
+    expect(notifyUsers.mock.calls[0][1].body).toContain('menunggu pengganti');
+
+    freshIdempotencyRecord();
+    await service.receivePurchase(fakePool, 1, {
+      ...baseOptions,
+      userId: 9,
+      lines: [{ item_id: 1, quantity: 6 }],
+      shortfallAction: 'REFUND'
+    });
+    expect(notifyUsers.mock.calls[1][1].body).toContain('dananya diminta kembali');
+  });
+
+  it('does not notify the creator about their own approval, or when there is no creator', async () => {
+    await service.receivePurchase(fakePool, 1, { ...baseOptions, userId: 5 });
+    expect(notifyUsers).not.toHaveBeenCalled();
+
+    freshIdempotencyRecord();
+    repository.findByIdForUpdate.mockResolvedValue(submittedPurchase({ created_by: null }));
+    await service.receivePurchase(fakePool, 1, { ...baseOptions, userId: 9 });
+    expect(notifyUsers).not.toHaveBeenCalled();
+  });
+
+  it('a failing notification never fails the receipt', async () => {
+    notifyUsers.mockRejectedValueOnce(new Error('inbox down'));
+    const result = await service.receivePurchase(fakePool, 1, { ...baseOptions, userId: 9 });
+    expect(result.statusCode).toBe(200);
   });
 });
 
