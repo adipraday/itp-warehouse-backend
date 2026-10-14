@@ -26,6 +26,8 @@ const listStocksQuerystring = {
   properties: {
     warehouse_id: { type: 'integer' },
     item_id: { type: 'integer' },
+    // Substring of the item's SKU, name or barcode.
+    q: { type: 'string', maxLength: 100 },
     page: { type: 'integer', minimum: 1, default: 1 },
     per_page: { type: 'integer', minimum: 1, maximum: 100, default: 20 }
   }

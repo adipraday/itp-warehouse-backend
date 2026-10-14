@@ -44,9 +44,16 @@ import { buIdsCondition, assignedWarehouseCondition } from '../../../shared/auth
 
 // `i.deleted_at IS NULL`: a deleted (archived) item no longer shows up in stock listings or in the
 // low/out-of-stock counts, even though its zero-quantity stock rows are kept for history.
-function buildFilter({ warehouseId, itemId, buIds, assignedWarehouseIds }) {
+// `q` (2026-10-15): case-insensitive substring match on the item's SKU, name or barcode, so a long
+// stock list can be searched server-side and still paginate correctly.
+function buildFilter({ warehouseId, itemId, q, buIds, assignedWarehouseIds }) {
   const conditions = ['i.deleted_at IS NULL'];
   const params = [];
+  if (q) {
+    const like = `%${q}%`;
+    conditions.push('(i.sku LIKE ? OR i.name LIKE ? OR i.barcode LIKE ?)');
+    params.push(like, like, like);
+  }
   if (warehouseId) {
     conditions.push('s.warehouse_id = ?');
     params.push(warehouseId);
@@ -72,8 +79,8 @@ const SELECT_COLUMNS = `s.id, s.warehouse_id, w.code AS warehouse_code, w.name A
        s.item_id, i.sku, i.name AS item_name, i.unit, i.min_stock, s.quantity, s.updated_at`;
 const JOINS = 'JOIN warehouses w ON w.id = s.warehouse_id JOIN items i ON i.id = s.item_id';
 
-export async function findAll(db, { warehouseId, itemId, buIds, assignedWarehouseIds, limit, offset }) {
-  const { clause, params } = buildFilter({ warehouseId, itemId, buIds, assignedWarehouseIds });
+export async function findAll(db, { warehouseId, itemId, q, buIds, assignedWarehouseIds, limit, offset }) {
+  const { clause, params } = buildFilter({ warehouseId, itemId, q, buIds, assignedWarehouseIds });
   const [rows] = await db.execute(
     `SELECT ${SELECT_COLUMNS} FROM stocks s ${JOINS} ${clause} ORDER BY s.id ASC LIMIT ? OFFSET ?`,
     [...params, limit, offset]
@@ -81,8 +88,8 @@ export async function findAll(db, { warehouseId, itemId, buIds, assignedWarehous
   return rows;
 }
 
-export async function count(db, { warehouseId, itemId, buIds, assignedWarehouseIds }) {
-  const { clause, params } = buildFilter({ warehouseId, itemId, buIds, assignedWarehouseIds });
+export async function count(db, { warehouseId, itemId, q, buIds, assignedWarehouseIds }) {
+  const { clause, params } = buildFilter({ warehouseId, itemId, q, buIds, assignedWarehouseIds });
   const [rows] = await db.execute(`SELECT COUNT(*) AS total FROM stocks s JOIN items i ON i.id = s.item_id ${clause}`, params);
   return Number(rows[0].total);
 }

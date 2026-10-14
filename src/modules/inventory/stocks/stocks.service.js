@@ -3,7 +3,14 @@ import * as repository from './stocks.repository.js';
 
 export async function listStocks(db, query, buIds = null, assignedWarehouseIds = null) {
   const { page, per_page, offset } = parsePagination(query);
-  const filter = { warehouseId: query.warehouse_id ?? null, itemId: query.item_id ?? null, buIds, assignedWarehouseIds };
+  const q = typeof query.q === 'string' ? query.q.trim() : '';
+  const filter = {
+    warehouseId: query.warehouse_id ?? null,
+    itemId: query.item_id ?? null,
+    q: q || null,
+    buIds,
+    assignedWarehouseIds
+  };
   const [data, total] = await Promise.all([
     repository.findAll(db, { ...filter, limit: per_page, offset }),
     repository.count(db, filter)
