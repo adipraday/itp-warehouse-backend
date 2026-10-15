@@ -21,9 +21,9 @@ export function buildCsvBuffer(headers, rows) {
   return Buffer.from(`${lines.join('\n')}\n`, 'utf8');
 }
 
-export async function buildXlsxBuffer(headers, rows) {
+export async function buildXlsxBuffer(headers, rows, sheetName = 'Items') {
   const workbook = new ExcelJS.Workbook();
-  const sheet = workbook.addWorksheet('Items');
+  const sheet = workbook.addWorksheet(sheetName);
   sheet.addRow(headers);
   for (const row of rows) {
     sheet.addRow(headers.map((header) => row[header] ?? ''));
@@ -39,9 +39,9 @@ const CONTENT_TYPES = {
 
 // format defaults to csv for anything unrecognized — the route layer already
 // validates format against an enum, this is just a safe fallback.
-export async function buildFileBuffer(format, headers, rows) {
+export async function buildFileBuffer(format, headers, rows, sheetName = 'Items') {
   if (format === 'xlsx') {
-    return { buffer: await buildXlsxBuffer(headers, rows), contentType: CONTENT_TYPES.xlsx, extension: 'xlsx' };
+    return { buffer: await buildXlsxBuffer(headers, rows, sheetName), contentType: CONTENT_TYPES.xlsx, extension: 'xlsx' };
   }
   return { buffer: buildCsvBuffer(headers, rows), contentType: CONTENT_TYPES.csv, extension: 'csv' };
 }

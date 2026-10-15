@@ -191,3 +191,22 @@ export async function countOutOfStock(db, { warehouseId, buIds, assignedWarehous
   );
   return Number(rows[0].total);
 }
+
+// Export (2026-10-15): every matching row in one go, no pagination — an export is meant to capture
+// everything. `status` narrows to the same rows the low-stock / out-of-stock endpoints return
+// (low = 0 < qty <= min_stock, out = qty = 0), so an export always matches the count shown in the app.
+const EXPORT_STATUS_CONDITIONS = {
+  low: ['s.quantity > 0', 's.quantity <= i.min_stock'],
+  out: ['s.quantity = 0']
+};
+
+export async function findAllForExport(db, { status = 'all', warehouseId, buIds, assignedWarehouseIds }) {
+  const { clause, params } = buildFilter({ warehouseId, buIds, assignedWarehouseIds });
+  const extra = (EXPORT_STATUS_CONDITIONS[status] ?? []).join(' AND ');
+  const where = extra ? `${clause} AND ${extra}` : clause;
+  const [rows] = await db.execute(
+    `SELECT ${SELECT_COLUMNS} FROM stocks s ${JOINS} ${where} ORDER BY w.code ASC, i.name ASC`,
+    params
+  );
+  return rows;
+}

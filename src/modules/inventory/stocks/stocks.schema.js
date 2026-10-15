@@ -69,3 +69,15 @@ export const outOfStockSchema = {
   querystring: warehouseFilterQuerystring,
   response: stockListResponse
 };
+
+export const exportStocksSchema = {
+  tags: ['stocks'],
+  querystring: {
+    type: 'object',
+    properties: {
+      format: { type: 'string', enum: ['csv', 'xlsx', 'pdf'], default: 'csv' },
+      status: { type: 'string', enum: ['all', 'low', 'out'], default: 'all' },
+      warehouse_id: { type: 'integer' }
+    }
+  }
+};
