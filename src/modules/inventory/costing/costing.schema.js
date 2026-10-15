@@ -2,6 +2,8 @@ const costLayerProperties = {
   id: { type: 'integer' },
   warehouse_id: { type: 'integer' },
   item_id: { type: 'integer' },
+  sku: { type: ['string', 'null'] },
+  item_name: { type: ['string', 'null'] },
   source_stock_mutation_id: { type: 'integer' },
   origin_cost_layer_id: { type: ['integer', 'null'] },
   quantity_received: { type: 'integer' },

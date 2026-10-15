@@ -66,7 +66,13 @@ function buildFilter(query) {
   return { clause: conditions.length ? `WHERE ${conditions.join(' AND ')}` : '', params };
 }
 
-const SELECT_COLUMNS = `id, warehouse_id, item_id, source_stock_mutation_id, origin_cost_layer_id,
+// sku / item_name (2026-10-15): the item behind `item_id`, so a layer can be read without looking the
+// id up elsewhere. Correlated subqueries (not a JOIN) keep every unqualified column in buildFilter()
+// unambiguous; an archived item still resolves, since its row is never physically removed.
+const SELECT_COLUMNS = `id, warehouse_id, item_id,
+       (SELECT i.sku FROM items i WHERE i.id = inventory_cost_layers.item_id) AS sku,
+       (SELECT i.name FROM items i WHERE i.id = inventory_cost_layers.item_id) AS item_name,
+       source_stock_mutation_id, origin_cost_layer_id,
        quantity_received, quantity_remaining, unit_cost, created_at`;
 
 export async function findAll(db, query, { limit, offset }) {
