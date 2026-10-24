@@ -30,6 +30,7 @@ import { returnsRoutes } from './modules/returns/returns.routes.js';
 import { dashboardRoutes } from './modules/dashboard/dashboard.routes.js';
 import { deviceTokensRoutes } from './modules/device-tokens/device-tokens.routes.js';
 import { notificationsRoutes } from './modules/notifications/notifications.routes.js';
+import { itemRequestsRoutes } from './modules/item-requests/item-requests.routes.js';
 import { initFirebaseMessaging } from './shared/notifications/firebase-admin.js';
 import { createObjectStorage } from './shared/storage/object-storage.js';
 
@@ -105,6 +106,7 @@ export async function buildApp({ logger = true } = {}) {
   await app.register(userWarehouseAssignmentsRoutes, { prefix: '/api/user-warehouse-assignments' });
   await app.register(deviceTokensRoutes, { prefix: '/api/device-tokens' });
   await app.register(notificationsRoutes, { prefix: '/api/notifications' });
+  await app.register(itemRequestsRoutes, { prefix: '/api/item-requests' });
 
   return app;
 }

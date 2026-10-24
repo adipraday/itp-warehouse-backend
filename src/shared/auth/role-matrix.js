@@ -93,6 +93,15 @@ const MATRIX = {
   // admin-bu/finance intervention on every single transaction.
   payments: { write: ['admin-bu', 'admin-warehouse', 'finance', 'kasir-sales'] },
 
+  // Permintaan barang ke gudang (2026-10-24, requested): a general, BU-wide request any role may file
+  // (and cancel while it is still OPEN). `handle` = the warehouse side that picks it up, fulfils or
+  // rejects it. Per request an admin-warehouse / staff-gudang must be assigned to the warehouse it is
+  // addressed to (item-requests.service.assertMayHandle). `owner` stays view-only.
+  'item-requests': {
+    write: ['admin-bu', 'admin-warehouse', 'staff-gudang', 'kasir-sales', 'purchasing', 'finance'],
+    handle: ['admin-bu', 'admin-warehouse', 'staff-gudang']
+  },
+
   // Read-only resources (no mutations exist). Listed for documentation.
   stocks: {},
   'stock-mutations': {},

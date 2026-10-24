@@ -31,7 +31,8 @@ Dokumen ini dibuat langsung dari schema Fastify di source code (`src/modules/**/
 18. [Returns](#18-returns)
 19. [Dashboard / Reporting](#19-dashboard--reporting)
 20. [Cash Sessions (Sesi Kasir / Shift)](#20-cash-sessions-sesi-kasir--shift)
-21. [Alur Kerja Umum (Workflow Examples)](#21-alur-kerja-umum-workflow-examples)
+21. [Item Requests (Permintaan Barang ke Gudang)](#21-item-requests-permintaan-barang-ke-gudang)
+22. [Alur Kerja Umum (Workflow Examples)](#22-alur-kerja-umum-workflow-examples)
 
 ---
 
@@ -118,6 +119,9 @@ Beberapa field selalu dihitung backend — kalau dikirim di body, akan **ditolak
 | 409 | `FIFO_ALLOCATION_MISMATCH` | Guard internal (harusnya tidak pernah muncul di kondisi normal) |
 | 409 | `RETURN_QUANTITY_EXCEEDS_ELIGIBLE` | Quantity retur melebihi sisa yang masih boleh diretur dari dokumen asal |
 | 409 | `AMOUNT_EXCEEDS_BALANCE` | Payment: `amount` melebihi sisa tagihan invoice |
+| 400 | `RESPONSE_NOTE_REQUIRED` | Item request: menolak (`REJECTED`) tanpa `note` alasan |
+| 400 | `BU_WAREHOUSE_MISMATCH` | Item request: `warehouse_id` bukan milik `bu_id` yang dikirim |
+| 409 | `INVALID_STATUS_TRANSITION` | Item request: perubahan status tidak sah dari status saat ini (atau sudah diubah orang lain lebih dulu) |
 
 ---
 
@@ -1075,7 +1079,86 @@ buat preview "kalau ditutup sekarang" selagi masih OPEN).
 
 ---
 
-## 21. Alur Kerja Umum (Workflow Examples)
+## 21. Item Requests (Permintaan Barang ke Gudang)
+
+Permintaan barang yang sifatnya **umum dalam satu business unit**: siapa pun yang bekerja di BU
+(admin-bu, admin-warehouse, staff-gudang, kasir-sales, purchasing, finance) boleh mengajukan, dan
+sisi gudang yang menindaklanjutinya. Isinya catatan bebas (teks), **tidak** terikat ke master item
+atau stok — memenuhi permintaan dilakukan lewat dokumen Barang Keluar / Transfer yang sudah ada.
+Role `owner` hanya bisa melihat.
+
+| Method | Path | Role | Keterangan |
+|---|---|---|---|
+| GET | `/api/item-requests` | semua | List, paginated, otomatis dibatasi ke BU caller |
+| GET | `/api/item-requests/:id` | semua | Detail (`403` kalau BU lain, `404` kalau tidak ada) |
+| POST | `/api/item-requests` | semua kecuali owner | Ajukan permintaan → `201` |
+| POST | `/api/item-requests/:id/status` | admin-bu, admin-warehouse, staff-gudang | `IN_PROGRESS` / `FULFILLED` / `REJECTED` |
+| POST | `/api/item-requests/:id/cancel` | peminta (selama `OPEN`) atau sisi gudang | Batalkan |
+
+**Query list:** `status` (satu nilai atau daftar dipisah koma, mis. `OPEN,IN_PROGRESS`),
+`warehouse_id`, `requested_by`, `mine=true` (hanya buatan caller), `source`, `external_ref`,
+`q` (cari di nomor, subjek, deskripsi, nama peminta), `page`, `per_page`.
+
+**Body create:** hanya `description` yang wajib.
+```json
+{
+  "description": "Butuh 20 dus kardus ukuran L untuk acara Jumat",
+  "subject": "Kardus ukuran L",
+  "requester_name": "Budi Santoso",
+  "warehouse_id": null,
+  "source": "erp-acme",
+  "external_ref": "PR-2026-0042"
+}
+```
+- `description` (wajib, ≤5000). Form di aplikasi hanya mengirim ini.
+- `subject` (opsional, ≤200) — kalau kosong diambil dari baris pertama `description` (maks. 100 karakter).
+- `requester_name` (opsional, ≤150) — nama orang yang meminta. `requested_by` (id akun) selalu diambil dari token, tidak bisa dikirim.
+- `warehouse_id` (opsional) — gudang tujuan; harus gudang di BU caller. Kosong = gudang mana saja di BU. Kalau diisi, BU permintaan mengikuti gudang itu.
+- `bu_id` (opsional) — hanya dipakai super-admin yang tidak mengirim `warehouse_id`; untuk role lain diabaikan dan BU diambil dari akun.
+- `source` (opsional, ≤50, default `app`) — asal permintaan; sistem eksternal sebaiknya mengisi namanya.
+- `external_ref` (opsional, ≤100) — id permintaan di sistem pemanggil. **Unik per BU**: mengirim ulang `external_ref` yang sama tidak membuat permintaan kedua, melainkan mengembalikan yang lama dengan `200` dan `"meta": { "duplicate": true }` — aman untuk retry.
+
+**Body status:** `{ "status": "IN_PROGRESS" | "FULFILLED" | "REJECTED", "note": "..." }` — `note` **wajib** untuk `REJECTED`
+(`400 RESPONSE_NOTE_REQUIRED`). **Body cancel:** `{ "note": "..." }` (opsional, boleh tanpa body).
+
+**Status:** `OPEN` → `IN_PROGRESS` → `FULFILLED`; dari `OPEN`/`IN_PROGRESS` bisa ke `REJECTED` atau `CANCELLED`.
+`FULFILLED`/`REJECTED`/`CANCELLED` final. Perubahan yang tidak sah → `409 INVALID_STATUS_TRANSITION`
+(termasuk kalah cepat dari orang lain yang mengubah permintaan yang sama). Peminta hanya boleh
+membatalkan miliknya sendiri selama masih `OPEN`; sisi gudang boleh membatalkan yang masih berjalan.
+admin-warehouse/staff-gudang yang di-assign ke gudang tertentu hanya bisa menindaklanjuti permintaan
+yang ditujukan ke gudangnya atau yang tidak menyebut gudang (`403` selain itu); admin-bu bisa semuanya di BU-nya.
+
+**Object item request:** `id, request_number (REQ-000001), bu_id, warehouse_id, warehouse_name, requested_by, requester_name, subject, description, status, source, external_ref, response_note, handled_by, handled_at, created_at, updated_at`
+
+**Notifikasi:** permintaan baru → admin-bu BU itu dan, kalau ada gudang tujuan, admin-warehouse + staff-gudang yang di-assign
+ke gudang tersebut (kalau tidak ada gudang tujuan: semua admin-warehouse + staff-gudang di BU). Perubahan status oleh gudang →
+peminta (inbox + push, tipe `item_request`). Tidak ada notifikasi ke diri sendiri.
+
+### Integrasi sistem eksternal
+
+Sistem luar memakai **endpoint yang sama** dengan aplikasi; tidak ada API terpisah.
+
+1. **Autentikasi** — sama seperti semua `/api/*`: `Authorization: Bearer <access token>` dari auth-backend. Buat satu akun khusus
+   untuk integrasi (mis. `erp-acme@perusahaan.id`) di BU yang dituju dengan role yang boleh mengajukan (mis. `purchasing`
+   atau `staff-gudang`), lalu login dengan akun itu untuk mendapat token (dan refresh token untuk memperpanjang). Akun inilah yang
+   tercatat sebagai `requested_by`; **orang** yang sebenarnya meminta dikirim lewat `requester_name`.
+   Catatan: staf yang dibatasi ke gudang (assignment) tetap harus di-assign ke minimal satu gudang, seperti akun lain.
+2. **Mengajukan** — `POST /api/item-requests` dengan `source` (nama sistem Anda) dan `external_ref` (id permintaan di sistem Anda):
+   ```bash
+   curl -X POST https://api-wms.itpintar.co.id/api/item-requests \
+     -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+     -d '{"description":"Kardus L x 20","requester_name":"Budi","source":"erp-acme","external_ref":"PR-2026-0042"}'
+   ```
+   Timeout/koneksi putus? Kirim ulang persis sama — hasilnya `200` dengan `meta.duplicate: true`, bukan permintaan ganda.
+3. **Mengecek status** — `GET /api/item-requests?external_ref=PR-2026-0042` (atau `GET /api/item-requests/:id`), baca `status` dan `response_note`.
+   Untuk memantau banyak sekaligus: `GET /api/item-requests?source=erp-acme&status=OPEN,IN_PROGRESS`.
+4. **Membatalkan** — `POST /api/item-requests/:id/cancel` (hanya selama masih `OPEN`, dan hanya oleh akun yang sama).
+5. **Error umum** — `400 VALIDATION_ERROR` (body tidak sesuai), `401` (token salah/kedaluwarsa), `403` (role tidak boleh / gudang di luar BU),
+   `404`, `409 INVALID_STATUS_TRANSITION`. Format error sama dengan bagian 1.
+
+---
+
+## 22. Alur Kerja Umum (Workflow Examples)
 
 ### A. Menerima barang dari supplier (Purchase)
 1. `POST /api/purchases` → dapat `id` DRAFT (opsional: `supplier_invoice_number`, lalu unggah PDF)

@@ -11,7 +11,8 @@ const RESOURCE_TO_ENTITY = {
   sales: 'SALE',
   purchases: 'PURCHASE',
   payments: 'PAYMENT',
-  returns: 'RETURN'
+  returns: 'RETURN',
+  'item-requests': 'ITEM_REQUEST'
 };
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
