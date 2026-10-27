@@ -1,7 +1,12 @@
 const mutationProperties = {
   id: { type: 'integer' },
   warehouse_id: { type: 'integer' },
+  warehouse_code: { type: ['string', 'null'] },
+  warehouse_name: { type: ['string', 'null'] },
   item_id: { type: 'integer' },
+  item_sku: { type: ['string', 'null'] },
+  item_name: { type: ['string', 'null'] },
+  item_unit: { type: ['string', 'null'] },
   type: { type: 'string' },
   direction: { type: 'string' },
   quantity: { type: 'integer' },
