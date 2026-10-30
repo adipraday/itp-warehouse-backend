@@ -349,9 +349,9 @@ terbuka untuk semua role yang login. Tidak ada perubahan kode.
 
 ### 5.5 `integration-readonly` — identitas API key partner (2026-10-30)
 
-Role untuk integrasi server/partner yang hanya membaca, dipakai bersama **API key** yang diterbitkan
-auth-backend (`docs/api-tokens.md` di repo auth: kunci ditukar ke JWT 15 menit di `POST /auth/api-token`;
-kunci tidak pernah sampai ke backend ini, jadi tidak ada kode verifikasi baru di sini).
+Role untuk integrasi server/partner yang hanya membaca, dipakai oleh sebuah **API User** di auth-backend
+(admin console auth → menu **API Users**; panduan: `docs/api-tokens.md` di repo auth). Token API User ditukar ke JWT
+15 menit di `POST /auth/api-token` dan tidak pernah sampai ke backend ini, jadi tidak ada kode verifikasi baru di sini.
 
 - **Tidak ada hak tulis sama sekali** — tidak tercantum di daftar write/approve/submit/reject/refund/handle
   mana pun di `MATRIX`, jadi semua `POST/PUT/PATCH/DELETE` data bisnis → 403. **Jangan pernah menambahkannya
@@ -363,20 +363,15 @@ kunci tidak pernah sampai ke backend ini, jadi tidak ada kode verifikasi baru di
 - **Terikat satu BU** — token `bu_ids = [BU home]`; bukan `STAFF_ROLES`, jadi membaca semua gudang di BU itu
   tanpa `user_warehouse_assignments`.
 - Masih membaca data bisnis lain yang terbuka untuk semua role (stok, mutasi, item, kontak, penjualan, dst.).
-- Role didaftarkan di auth-backend (`SERVICE_ROLES.warehouse`, migration 013). Tes: `tests/shared/role-matrix.test.js`
+- Role didaftarkan di auth-backend (`SERVICE_ROLES.warehouse`, migration 013) dan **hanya bisa diberikan lewat API Users**
+  (`POST /users` menolaknya). Tes: `tests/shared/role-matrix.test.js`
   dan `tests/modules/integration-readonly.routes.test.js` (403 sungguhan via `app.inject`).
 - **Urutan rilis: deploy backend ini dulu, baru auth** (sebelumnya role itu belum dikenal di sini).
-
-## 6. Yang TIDAK berubah di backend ini
-
-- Kolom audit (`created_by` dll) tetap `INT NULL` tanpa FK — `users` tetap di auth backend.
-- `activity_logs` di backend ini tetap jalan (beda tabel dari `activity_logs` milik auth backend).
-- Semua service & repository tidak disentuh — auth murni di layer hook/route.
 
 ### 5.6 `integration-requester` — sistem eksternal yang mengajukan permintaan barang (2026-10-31)
 
 Untuk ERP/sistem luar yang `POST /api/item-requests` (lihat api-documentation.md "Integrasi sistem eksternal"),
-juga lewat **API key** auth-backend. Beda dengan `integration-readonly` (§5.5): ia boleh menulis, tapi **hanya item-requests**,
+juga lewat sebuah **API User** auth-backend (admin console → **API Users**; token ditukar ke JWT 15 menit). Beda dengan `integration-readonly` (§5.5): ia boleh menulis, tapi **hanya item-requests**,
 dan aksesnya **deny-by-default**.
 
 - `MATRIX['item-requests'].write` memuatnya; `handle` **tidak** — ia tidak bisa memproses/menyelesaikan/menolak permintaan.
@@ -386,5 +381,12 @@ dan aksesnya **deny-by-default**.
   (baca terbuka untuk semua role lain, jadi di sini daftar yang diizinkan, bukan daftar yang ditolak). Jangan melebarkan daftar tanpa alasan.
 - `item-requests.service`: untuk role ini list dipaksa `requested_by = dirinya`, detail/batal permintaan orang lain `404`,
   `external_ref` yang dipakai orang lain `409 EXTERNAL_REF_TAKEN` (daftar permintaan biasanya dibagi seluruh BU; pihak luar tidak boleh membacanya).
-- Didaftarkan di auth-backend (`SERVICE_ROLES.warehouse`, migration 014). Tes: `tests/modules/integration-requester.test.js`.
+- Didaftarkan di auth-backend (`SERVICE_ROLES.warehouse`, migration 014) dan **hanya bisa diberikan lewat API Users**
+  (`POST /users` menolaknya). Tes: `tests/modules/integration-requester.test.js`.
 - **Urutan rilis: backend ini dulu, baru auth** (role belum dikenal di sini sebelum dirilis).
+
+## 6. Yang TIDAK berubah di backend ini
+
+- Kolom audit (`created_by` dll) tetap `INT NULL` tanpa FK — `users` tetap di auth backend.
+- `activity_logs` di backend ini tetap jalan (beda tabel dari `activity_logs` milik auth backend).
+- Semua service & repository tidak disentuh — auth murni di layer hook/route.

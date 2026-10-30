@@ -1138,18 +1138,26 @@ peminta (inbox + push, tipe `item_request`). Tidak ada notifikasi ke diri sendir
 
 Sistem luar memakai **endpoint yang sama** dengan aplikasi; tidak ada API terpisah.
 
-1. **Autentikasi — pakai API key, bukan login + refresh token.** Minta admin membuat satu akun khusus integrasi
-   (mis. `erp-acme@perusahaan.id`) di BU yang dituju dengan role **`integration-requester`**, lalu menerbitkan **API key**
-   untuk akun itu di auth-backend (`POST /users/:id/api-tokens`, panduan: `docs/api-tokens.md` di repo auth). Sistem Anda
-   menyimpan key itu (rahasia, tampil sekali) dan tiap kali butuh token menukarnya:
+1. **Autentikasi — pakai token milik API User, bukan login + refresh token.** Minta admin auth membuat satu **API User**
+   di admin console auth (`https://admin.itpintar.co.id` → menu **API Users** → **+ Tambah API User**): Service
+   *Warehouse Management System*, Business Unit yang dituju, role **`integration-requester`**, dan centang **IP Strict**
+   (isi IP/CIDR server Anda) kalau IP server Anda tetap; tanpa centang = semua IP boleh, untuk IP dinamis. Admin menyerahkan
+   **token** (`api_…`) yang tampil sekali — simpan sebagai rahasia (secret manager / env server). API User tidak punya password
+   dan tidak bisa login. Sistem Anda menukar token itu tiap kali butuh token akses:
    ```bash
    curl -X POST https://auth.itpintar.co.id/auth/api-token -H "Content-Type: application/json" -d '{"api_token":"api_…"}'
    # → { "data": { "access_token": "<JWT>", "expires_in": 900, … } }   (simpan sampai ±1 menit sebelum habis, lalu tukar lagi)
    ```
    Pakai `access_token` itu sebagai `Authorization: Bearer <access token>` ke backend ini. **Jangan** memakai login password +
    refresh token untuk integrasi server: refresh token dirotasi tiap dipakai (dua worker/crash sebelum menyimpan = sesi dicabut),
-   mati setelah 7 hari tidak dipakai, dan menuntut password akun disimpan di sistem Anda. Key tidak punya masalah itu, bisa
-   direvoke kapan saja, dan JWT-nya tidak bisa mengubah akun.
+   mati setelah 7 hari tidak dipakai, dan menuntut password akun disimpan di sistem Anda. Token API tidak punya masalah itu, bisa
+   dicabut kapan saja, dan JWT-nya tidak bisa mengubah akun.
+   - **Masa berlaku & rotasi:** token berlaku sesuai pilihan admin (maks. 365 hari). Sebelum habis: admin menerbitkan token baru,
+     Anda pindah ke token itu, lalu admin mencabut yang lama (maks. 5 token aktif sekaligus).
+   - **IP Strict:** kalau aktif dan penukaran datang dari IP yang tidak terdaftar, balasannya `401` yang sama dengan token salah —
+     daftarkan IP **keluar (egress)** server Anda. Token akses 15 menit hasil tukaran tidak terikat IP.
+   - Admin bisa **menangguhkan** API User (token tidak bisa ditukar sementara) atau mencabut token kapan saja.
+
    Akun inilah yang tercatat sebagai `requested_by`; **orang** yang sebenarnya meminta dikirim lewat `requester_name`.
    Role `integration-requester` sengaja **sempit** (deny-by-default): hanya `/api/item-requests` (ajukan, baca, batalkan),
    `GET /api/warehouses` (mencari `warehouse_id` tujuan) dan `GET /api/me`. Semua endpoint lain — stok, item, kontak, penjualan,
@@ -1166,7 +1174,7 @@ Sistem luar memakai **endpoint yang sama** dengan aplikasi; tidak ada API terpis
 3. **Mengecek status** — `GET /api/item-requests?external_ref=PR-2026-0042` (atau `GET /api/item-requests/:id`), baca `status` dan `response_note`.
    Untuk memantau banyak sekaligus: `GET /api/item-requests?source=erp-acme&status=OPEN,IN_PROGRESS`.
 4. **Membatalkan** — `POST /api/item-requests/:id/cancel` (hanya selama masih `OPEN`, dan hanya oleh akun yang sama).
-5. **Error umum** — `400 VALIDATION_ERROR` (body tidak sesuai), `401` (token salah/kedaluwarsa), `403` (role tidak boleh / gudang di luar BU),
+5. **Error umum** — `400 VALIDATION_ERROR` (body tidak sesuai), `401` (token akses salah/kedaluwarsa; pada penukaran di auth: token API salah/dicabut/kedaluwarsa, API User ditangguhkan, atau IP tidak terdaftar), `403` (role tidak boleh / gudang di luar BU),
    `404`, `409 INVALID_STATUS_TRANSITION` / `409 EXTERNAL_REF_TAKEN`. Format error sama dengan bagian 1.
 
 ---
