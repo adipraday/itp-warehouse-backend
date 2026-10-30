@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { can, guard, ROLES, HPP_VISIBLE_ROLES } from '../../src/shared/auth/role-matrix.js';
+import {
+  can,
+  guard,
+  guardRead,
+  ROLES,
+  HPP_VISIBLE_ROLES,
+  INTEGRATION_READONLY_ROLE
+} from '../../src/shared/auth/role-matrix.js';
+import { STAFF_ROLES } from '../../src/shared/auth/warehouse-assignment.js';
 
 describe('role-matrix can()', () => {
   it('lets super-admin do anything, including unknown resources', () => {
@@ -191,5 +199,60 @@ describe('role-matrix guard()', () => {
     await expect(
       hook(makeRequest({ userId: 1, role: 'staff-gudang', buId: 11 }))
     ).rejects.toMatchObject({ statusCode: 403 });
+  });
+});
+
+// integration-readonly (2026-10-30): the identity behind a partner API key (auth-backend
+// docs/api-tokens.md). View-only like owner, but bound to one BU, no HPP, no activity logs.
+describe('integration-readonly role (partner API key, view-only)', () => {
+  const role = INTEGRATION_READONLY_ROLE;
+  const resources = [
+    'warehouses', 'user-warehouse-assignments', 'items', 'contacts', 'inbounds', 'outbounds',
+    'stock-transfers', 'stock-opnames', 'returns', 'sales', 'cash-sessions', 'purchases', 'payments',
+    'item-requests', 'stocks', 'stock-mutations', 'cost-layers', 'cost-summary', 'invoices',
+    'dashboard', 'activity-logs', 'nonexistent-resource'
+  ];
+  const actions = ['write', 'approve', 'submit', 'reject', 'refund', 'handle'];
+
+  it('is declared in ROLES under the exact name auth-backend issues', () => {
+    expect(role).toBe('integration-readonly');
+    expect(ROLES).toContain(role);
+  });
+
+  it('is denied EVERY mutating action on EVERY resource', () => {
+    for (const resource of resources) {
+      for (const action of actions) {
+        expect(can(role, resource, action), `${resource}:${action}`).toBe(false);
+      }
+    }
+  });
+
+  it('guard() answers 403 for a write, e.g. creating a sale or an inbound', async () => {
+    for (const resource of ['sales', 'inbounds', 'purchases', 'items']) {
+      await expect(guard(resource, 'write')({ userContext: { userId: 9, role } })).rejects.toMatchObject({
+        statusCode: 403
+      });
+    }
+  });
+
+  it('cannot see HPP / cost data', () => {
+    expect(HPP_VISIBLE_ROLES).not.toContain(role);
+  });
+
+  it('is not a STAFF_ROLE, so it reads every warehouse of its BU without per-warehouse assignments', () => {
+    expect(STAFF_ROLES).not.toContain(role);
+  });
+
+  it('guardRead() refuses activity-logs for it, but only for it', async () => {
+    const read = (r) => guardRead('activity-logs')({ userContext: { userId: 9, role: r } });
+    await expect(read(role)).rejects.toMatchObject({ statusCode: 403 });
+    for (const other of ['owner', 'admin-bu', 'admin-warehouse', 'staff-gudang', 'kasir-sales', 'finance']) {
+      await expect(read(other), other).resolves.toBeUndefined();
+    }
+  });
+
+  it('guardRead() leaves other resources readable and stays lenient without an identity', async () => {
+    await expect(guardRead('stocks')({ userContext: { userId: 9, role } })).resolves.toBeUndefined();
+    await expect(guardRead('activity-logs')({ userContext: null })).resolves.toBeUndefined();
   });
 });

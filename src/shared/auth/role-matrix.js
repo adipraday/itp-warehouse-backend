@@ -19,6 +19,7 @@ export const ROLES = [
   'owner',        // multi-tenant (2026-09-08): view-only across every BU in one company
   'admin-bu',     // top of one business unit (can also hold grants to other BUs — see bu_ids)
   'admin-warehouse', // full operational access, but confined to one warehouse (2026-09-21) — see STAFF_ROLES
+  'integration-readonly', // partner/server integration key (2026-10-30): reads one BU's business data, nothing else
   'staff-gudang',
   'kasir-sales',
   'purchasing',
@@ -141,6 +142,36 @@ function forbidden(message) {
   error.statusCode = 403;
   error.code = 'FORBIDDEN';
   return error;
+}
+
+// `integration-readonly` (2026-10-30) = the identity behind a partner API key (auth-backend
+// docs/api-tokens.md). It is view-only exactly like `owner` — it appears in NO write/approve/
+// submit list above, and not in HPP_VISIBLE_ROLES (no cost/margin data) — but unlike owner it is
+// bound to ONE business unit (token bu_ids = [home BU]) and, not being in STAFF_ROLES, reads every
+// warehouse of that BU without per-warehouse assignments. Do not add it to any write list.
+//
+// Reads are open to every role, so internal-only reads need an explicit deny. These are the
+// resources it may NOT read: they expose who works here and what they did, not business data.
+export const INTEGRATION_READONLY_ROLE = 'integration-readonly';
+const READ_DENIED_FOR_INTEGRATION = ['activity-logs'];
+
+/**
+ * onRequest-hook for GET routes that a partner integration must not read. Mount on the route as
+ *   app.get('/', { onRequest: guardRead('activity-logs') }, handler)
+ * Every other role keeps today's behaviour (reads open) — only `integration-readonly` is refused.
+ */
+export function guardRead(resource) {
+  return async function roleMatrixReadOnRequest(request) {
+    const ctx = request.userContext;
+
+    if (!ctx || !ctx.userId) {
+      return;
+    }
+
+    if (ctx.role === INTEGRATION_READONLY_ROLE && READ_DENIED_FOR_INTEGRATION.includes(resource)) {
+      throw forbidden(`Role "${ctx.role}" may not read ${resource}`);
+    }
+  };
 }
 
 /**

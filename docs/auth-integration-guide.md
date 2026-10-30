@@ -344,6 +344,29 @@ belum masuk rencana.
 Sempat dipertimbangkan untuk dibatasi ke `admin-bu`/`super-admin` saja, tapi diputuskan tetap
 terbuka untuk semua role yang login. Tidak ada perubahan kode.
 
+**Satu pengecualian (2026-10-30): `integration-readonly`** — lihat §5.5. `GET /api/activity-logs`
+(list dan detail) ditolak 403 untuk role itu lewat `guardRead('activity-logs')`; role lain tidak berubah.
+
+### 5.5 `integration-readonly` — identitas API key partner (2026-10-30)
+
+Role untuk integrasi server/partner yang hanya membaca, dipakai bersama **API key** yang diterbitkan
+auth-backend (`docs/api-tokens.md` di repo auth: kunci ditukar ke JWT 15 menit di `POST /auth/api-token`;
+kunci tidak pernah sampai ke backend ini, jadi tidak ada kode verifikasi baru di sini).
+
+- **Tidak ada hak tulis sama sekali** — tidak tercantum di daftar write/approve/submit/reject/refund/handle
+  mana pun di `MATRIX`, jadi semua `POST/PUT/PATCH/DELETE` data bisnis → 403. **Jangan pernah menambahkannya
+  ke daftar tulis** (sama seperti `owner`). `device-tokens` dan `notifications` memang tanpa guard (hanya
+  mengubah milik akun sendiri), jadi tetap bisa.
+- **Tidak melihat HPP/biaya** — tidak ada di `HPP_VISIBLE_ROLES`.
+- **Tidak membaca `activity-logs`** — `guardRead()` di `role-matrix.js` (daftar `READ_DENIED_FOR_INTEGRATION`).
+  Tambahkan resource ke daftar itu kalau ada GET internal lain yang tidak boleh dibaca partner.
+- **Terikat satu BU** — token `bu_ids = [BU home]`; bukan `STAFF_ROLES`, jadi membaca semua gudang di BU itu
+  tanpa `user_warehouse_assignments`.
+- Masih membaca data bisnis lain yang terbuka untuk semua role (stok, mutasi, item, kontak, penjualan, dst.).
+- Role didaftarkan di auth-backend (`SERVICE_ROLES.warehouse`, migration 013). Tes: `tests/shared/role-matrix.test.js`
+  dan `tests/modules/integration-readonly.routes.test.js` (403 sungguhan via `app.inject`).
+- **Urutan rilis: deploy backend ini dulu, baru auth** (sebelumnya role itu belum dikenal di sini).
+
 ## 6. Yang TIDAK berubah di backend ini
 
 - Kolom audit (`created_by` dll) tetap `INT NULL` tanpa FK — `users` tetap di auth backend.

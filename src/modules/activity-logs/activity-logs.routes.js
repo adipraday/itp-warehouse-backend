@@ -1,4 +1,5 @@
 import { buScope } from '../../shared/auth/bu-scope.js';
+import { guardRead } from '../../shared/auth/role-matrix.js';
 import * as service from './activity-logs.service.js';
 import { listActivityLogsSchema, getActivityLogSchema } from './activity-logs.schema.js';
 
@@ -10,7 +11,7 @@ import { listActivityLogsSchema, getActivityLogSchema } from './activity-logs.sc
 const scope = buScope('activity-logs');
 
 export async function activityLogsRoutes(app) {
-  app.get('/', { preValidation: scope, schema: listActivityLogsSchema }, async (request) => {
+  app.get('/', { onRequest: guardRead('activity-logs'), preValidation: scope, schema: listActivityLogsSchema }, async (request) => {
     return service.listActivityLogs(
       app.db,
       request.query,
@@ -19,7 +20,7 @@ export async function activityLogsRoutes(app) {
     );
   });
 
-  app.get('/:id', { preValidation: scope, schema: getActivityLogSchema }, async (request) => {
+  app.get('/:id', { onRequest: guardRead('activity-logs'), preValidation: scope, schema: getActivityLogSchema }, async (request) => {
     return service.getActivityLog(
       app.db,
       request.params.id,
