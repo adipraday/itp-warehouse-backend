@@ -6,6 +6,7 @@ import { registerEnv } from './config/env.js';
 import { errorHandler } from './plugins/error-handler.js';
 import { registerSwagger } from './plugins/swagger.js';
 import { registerUserContext } from './shared/auth/user-context.js';
+import { integrationScope } from './shared/auth/role-matrix.js';
 import { registerWarehouseAssignment } from './shared/auth/warehouse-assignment.js';
 import { registerActivityLog } from './shared/activity-log/log-hook.js';
 import { activityLogsRoutes } from './modules/activity-logs/activity-logs.routes.js';
@@ -73,6 +74,10 @@ export async function buildApp({ logger = true } = {}) {
   initFirebaseMessaging({ serviceAccountPath: app.config.FIREBASE_SERVICE_ACCOUNT_PATH, logger: app.log });
 
   await registerUserContext(app);
+  // `integration-requester` (an external system filing item requests) is deny-by-default: only
+  // /api/item-requests, GET /api/warehouses and GET /api/me. No-op for every other role. Needs
+  // request.userContext, so it must come after registerUserContext. See role-matrix.js.
+  app.addHook('onRequest', integrationScope);
   // Must run after registerUserContext (needs request.userContext.userId/role)
   // and before every /api/* route — resolves per-warehouse staff scoping and
   // hard-blocks an unassigned staff user. See src/shared/auth/warehouse-assignment.js.

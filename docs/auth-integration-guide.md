@@ -372,3 +372,19 @@ kunci tidak pernah sampai ke backend ini, jadi tidak ada kode verifikasi baru di
 - Kolom audit (`created_by` dll) tetap `INT NULL` tanpa FK — `users` tetap di auth backend.
 - `activity_logs` di backend ini tetap jalan (beda tabel dari `activity_logs` milik auth backend).
 - Semua service & repository tidak disentuh — auth murni di layer hook/route.
+
+### 5.6 `integration-requester` — sistem eksternal yang mengajukan permintaan barang (2026-10-31)
+
+Untuk ERP/sistem luar yang `POST /api/item-requests` (lihat api-documentation.md "Integrasi sistem eksternal"),
+juga lewat **API key** auth-backend. Beda dengan `integration-readonly` (§5.5): ia boleh menulis, tapi **hanya item-requests**,
+dan aksesnya **deny-by-default**.
+
+- `MATRIX['item-requests'].write` memuatnya; `handle` **tidak** — ia tidak bisa memproses/menyelesaikan/menolak permintaan.
+  Tidak ada di daftar tulis resource lain, tidak di `HPP_VISIBLE_ROLES`, bukan `STAFF_ROLES` (tanpa penugasan gudang).
+- `integrationScope()` (hook global di `app.js`, setelah `registerUserContext`) hanya membolehkan `/api/item-requests`,
+  `GET /api/warehouses`, `GET /api/me`; selain itu `403` — termasuk **baca** stok/item/kontak/penjualan/log aktivitas
+  (baca terbuka untuk semua role lain, jadi di sini daftar yang diizinkan, bukan daftar yang ditolak). Jangan melebarkan daftar tanpa alasan.
+- `item-requests.service`: untuk role ini list dipaksa `requested_by = dirinya`, detail/batal permintaan orang lain `404`,
+  `external_ref` yang dipakai orang lain `409 EXTERNAL_REF_TAKEN` (daftar permintaan biasanya dibagi seluruh BU; pihak luar tidak boleh membacanya).
+- Didaftarkan di auth-backend (`SERVICE_ROLES.warehouse`, migration 014). Tes: `tests/modules/integration-requester.test.js`.
+- **Urutan rilis: backend ini dulu, baru auth** (role belum dikenal di sini sebelum dirilis).

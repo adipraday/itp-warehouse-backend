@@ -1116,7 +1116,7 @@ Role `owner` hanya bisa melihat.
 - `warehouse_id` (opsional) — gudang tujuan; harus gudang di BU caller. Kosong = gudang mana saja di BU. Kalau diisi, BU permintaan mengikuti gudang itu.
 - `bu_id` (opsional) — hanya dipakai super-admin yang tidak mengirim `warehouse_id`; untuk role lain diabaikan dan BU diambil dari akun.
 - `source` (opsional, ≤50, default `app`) — asal permintaan; sistem eksternal sebaiknya mengisi namanya.
-- `external_ref` (opsional, ≤100) — id permintaan di sistem pemanggil. **Unik per BU**: mengirim ulang `external_ref` yang sama tidak membuat permintaan kedua, melainkan mengembalikan yang lama dengan `200` dan `"meta": { "duplicate": true }` — aman untuk retry.
+- `external_ref` (opsional, ≤100) — id permintaan di sistem pemanggil. **Unik per BU**: mengirim ulang `external_ref` yang sama tidak membuat permintaan kedua, melainkan mengembalikan yang lama dengan `200` dan `"meta": { "duplicate": true }` — aman untuk retry. Untuk `integration-requester`, `external_ref` yang sudah dipakai **orang lain** di BU itu dijawab `409 EXTERNAL_REF_TAKEN` (permintaan orang lain tidak pernah dikembalikan).
 
 **Body status:** `{ "status": "IN_PROGRESS" | "FULFILLED" | "REJECTED", "note": "..." }` — `note` **wajib** untuk `REJECTED`
 (`400 RESPONSE_NOTE_REQUIRED`). **Body cancel:** `{ "note": "..." }` (opsional, boleh tanpa body).
@@ -1138,11 +1138,24 @@ peminta (inbox + push, tipe `item_request`). Tidak ada notifikasi ke diri sendir
 
 Sistem luar memakai **endpoint yang sama** dengan aplikasi; tidak ada API terpisah.
 
-1. **Autentikasi** — sama seperti semua `/api/*`: `Authorization: Bearer <access token>` dari auth-backend. Buat satu akun khusus
-   untuk integrasi (mis. `erp-acme@perusahaan.id`) di BU yang dituju dengan role yang boleh mengajukan (mis. `purchasing`
-   atau `staff-gudang`), lalu login dengan akun itu untuk mendapat token (dan refresh token untuk memperpanjang). Akun inilah yang
-   tercatat sebagai `requested_by`; **orang** yang sebenarnya meminta dikirim lewat `requester_name`.
-   Catatan: staf yang dibatasi ke gudang (assignment) tetap harus di-assign ke minimal satu gudang, seperti akun lain.
+1. **Autentikasi — pakai API key, bukan login + refresh token.** Minta admin membuat satu akun khusus integrasi
+   (mis. `erp-acme@perusahaan.id`) di BU yang dituju dengan role **`integration-requester`**, lalu menerbitkan **API key**
+   untuk akun itu di auth-backend (`POST /users/:id/api-tokens`, panduan: `docs/api-tokens.md` di repo auth). Sistem Anda
+   menyimpan key itu (rahasia, tampil sekali) dan tiap kali butuh token menukarnya:
+   ```bash
+   curl -X POST https://auth.itpintar.co.id/auth/api-token -H "Content-Type: application/json" -d '{"api_token":"api_…"}'
+   # → { "data": { "access_token": "<JWT>", "expires_in": 900, … } }   (simpan sampai ±1 menit sebelum habis, lalu tukar lagi)
+   ```
+   Pakai `access_token` itu sebagai `Authorization: Bearer <access token>` ke backend ini. **Jangan** memakai login password +
+   refresh token untuk integrasi server: refresh token dirotasi tiap dipakai (dua worker/crash sebelum menyimpan = sesi dicabut),
+   mati setelah 7 hari tidak dipakai, dan menuntut password akun disimpan di sistem Anda. Key tidak punya masalah itu, bisa
+   direvoke kapan saja, dan JWT-nya tidak bisa mengubah akun.
+   Akun inilah yang tercatat sebagai `requested_by`; **orang** yang sebenarnya meminta dikirim lewat `requester_name`.
+   Role `integration-requester` sengaja **sempit** (deny-by-default): hanya `/api/item-requests` (ajukan, baca, batalkan),
+   `GET /api/warehouses` (mencari `warehouse_id` tujuan) dan `GET /api/me`. Semua endpoint lain — stok, item, kontak, penjualan,
+   HPP, log aktivitas — membalas `403`, juga untuk baca. Ia **hanya melihat permintaan yang diajukannya sendiri** (list, detail dan
+   batal permintaan orang lain → kosong/`404`), tidak bisa memproses (`/status`) permintaan, dan tidak perlu di-assign ke gudang.
+   Jangan memakai `integration-readonly` untuk ini: role itu baca-saja dan `POST` ditolak `403`.
 2. **Mengajukan** — `POST /api/item-requests` dengan `source` (nama sistem Anda) dan `external_ref` (id permintaan di sistem Anda):
    ```bash
    curl -X POST https://api-wms.itpintar.co.id/api/item-requests \
@@ -1154,7 +1167,7 @@ Sistem luar memakai **endpoint yang sama** dengan aplikasi; tidak ada API terpis
    Untuk memantau banyak sekaligus: `GET /api/item-requests?source=erp-acme&status=OPEN,IN_PROGRESS`.
 4. **Membatalkan** — `POST /api/item-requests/:id/cancel` (hanya selama masih `OPEN`, dan hanya oleh akun yang sama).
 5. **Error umum** — `400 VALIDATION_ERROR` (body tidak sesuai), `401` (token salah/kedaluwarsa), `403` (role tidak boleh / gudang di luar BU),
-   `404`, `409 INVALID_STATUS_TRANSITION`. Format error sama dengan bagian 1.
+   `404`, `409 INVALID_STATUS_TRANSITION` / `409 EXTERNAL_REF_TAKEN`. Format error sama dengan bagian 1.
 
 ---
 

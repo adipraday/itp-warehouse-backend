@@ -18,7 +18,7 @@ export async function itemRequestsRoutes(app) {
   });
 
   app.get('/:id', { schema: getItemRequestSchema }, async (request) => {
-    return service.getItemRequest(app.db, request.params.id, request.userContext?.buIds);
+    return service.getItemRequest(app.db, request.params.id, request.userContext?.buIds, request.userContext);
   });
 
   app.post('/', { onRequest: guard('item-requests', 'write'), schema: createItemRequestSchema }, async (request, reply) => {

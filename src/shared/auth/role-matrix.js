@@ -20,6 +20,7 @@ export const ROLES = [
   'admin-bu',     // top of one business unit (can also hold grants to other BUs — see bu_ids)
   'admin-warehouse', // full operational access, but confined to one warehouse (2026-09-21) — see STAFF_ROLES
   'integration-readonly', // partner/server integration key (2026-10-30): reads one BU's business data, nothing else
+  'integration-requester', // external system that files item requests (2026-10-31): item-requests only — see integrationScope()
   'staff-gudang',
   'kasir-sales',
   'purchasing',
@@ -98,8 +99,10 @@ const MATRIX = {
   // (and cancel while it is still OPEN). `handle` = the warehouse side that picks it up, fulfils or
   // rejects it. Per request an admin-warehouse / staff-gudang must be assigned to the warehouse it is
   // addressed to (item-requests.service.assertMayHandle). `owner` stays view-only.
+  // `integration-requester` (2026-10-31) may file and withdraw its OWN requests (write) but never
+  // handle them (fulfil / reject / start) — `handle` stays warehouse-side only.
   'item-requests': {
-    write: ['admin-bu', 'admin-warehouse', 'staff-gudang', 'kasir-sales', 'purchasing', 'finance'],
+    write: ['admin-bu', 'admin-warehouse', 'staff-gudang', 'kasir-sales', 'purchasing', 'finance', 'integration-requester'],
     handle: ['admin-bu', 'admin-warehouse', 'staff-gudang']
   },
 
@@ -172,6 +175,50 @@ export function guardRead(resource) {
       throw forbidden(`Role "${ctx.role}" may not read ${resource}`);
     }
   };
+}
+
+// `integration-requester` (2026-10-31) = the identity behind an external system (e.g. an ERP) that
+// files item requests through an auth-backend API key (docs/api-tokens.md). Least privilege, and
+// unlike integration-readonly it is DENY-BY-DEFAULT: reads are open to every role, so instead of
+// listing what it may not read, integrationScope() lists the only thing it may touch.
+//   - /api/item-requests   file, read and withdraw its OWN requests (item-requests.service scopes
+//                          list/detail to requested_by = itself; it can never `handle` — MATRIX)
+//   - GET /api/warehouses  to learn a destination warehouse_id
+//   - /api/me              its own access status
+// Everything else under /api is 403 — stocks, items, contacts, sales, activity logs, HPP, … even
+// reads. Not a STAFF_ROLE, so no per-warehouse assignment is needed. Do not widen this list lightly.
+export const INTEGRATION_REQUESTER_ROLE = 'integration-requester';
+const REQUESTER_ALLOWED = [
+  { prefix: '/api/item-requests', methods: null },
+  { prefix: '/api/warehouses', methods: ['GET'] },
+  { prefix: '/api/me', methods: ['GET'] }
+];
+
+/**
+ * Global onRequest hook (register AFTER registerUserContext). No-op for every other role.
+ */
+export async function integrationScope(request) {
+  const ctx = request.userContext;
+
+  if (!ctx || !ctx.userId || ctx.role !== INTEGRATION_REQUESTER_ROLE) {
+    return;
+  }
+
+  const path = request.url.split('?')[0];
+
+  if (!path.startsWith('/api/')) {
+    return; // /health, /documentation — public paths are not ours to gate
+  }
+
+  const allowed = REQUESTER_ALLOWED.some(
+    (rule) =>
+      (path === rule.prefix || path.startsWith(`${rule.prefix}/`)) &&
+      (rule.methods === null || rule.methods.includes(request.method))
+  );
+
+  if (!allowed) {
+    throw forbidden(`Role "${ctx.role}" may not access ${request.method} ${path.split('/').slice(0, 3).join('/')}`);
+  }
 }
 
 /**

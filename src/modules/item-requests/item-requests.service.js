@@ -1,7 +1,7 @@
 import { BadRequestError, ConflictError, NotFoundError } from '../../shared/errors/app-error.js';
 import { parsePagination } from '../../shared/utils/pagination.js';
 import { assertRowInScope } from '../../shared/auth/master-data-scope.js';
-import { can } from '../../shared/auth/role-matrix.js';
+import { can, INTEGRATION_REQUESTER_ROLE } from '../../shared/auth/role-matrix.js';
 import { notifyStakeholders, notifyUsers } from '../../shared/notifications/push.js';
 import * as warehousesRepository from '../warehouses/warehouses.repository.js';
 import * as repository from './item-requests.repository.js';
@@ -33,6 +33,16 @@ function inBuScope(buId, buIds) {
   return buIds == null || buIds.map(Number).includes(Number(buId));
 }
 
+// An external system (role integration-requester, filed through an auth API key) only ever sees and
+// touches the requests IT filed. Everyone else in the BU keeps today's behaviour (the list is shared).
+function ownRequestsOnly(ctx) {
+  return ctx?.role === INTEGRATION_REQUESTER_ROLE;
+}
+
+function isOwnRequest(request, ctx) {
+  return request.requested_by != null && Number(request.requested_by) === Number(ctx?.userId);
+}
+
 // The form only asks for a description, so a missing subject is taken from its first line.
 export function deriveSubject(description) {
   const firstLine =
@@ -49,7 +59,7 @@ export async function listItemRequests(db, query, ctx = {}) {
     buIds: ctx.buIds ?? null,
     status: query.status ? query.status.split(',').map((s) => s.trim()).filter(Boolean) : null,
     warehouseId: query.warehouse_id ?? null,
-    requestedBy: query.mine ? ctx.userId : (query.requested_by ?? null),
+    requestedBy: ownRequestsOnly(ctx) ? ctx.userId : query.mine ? ctx.userId : (query.requested_by ?? null),
     source: query.source ?? null,
     externalRef: query.external_ref ?? null,
     q: query.q?.trim() || null
@@ -61,10 +71,12 @@ export async function listItemRequests(db, query, ctx = {}) {
   return { data, meta: { page, per_page, total } };
 }
 
-export async function getItemRequest(db, id, buIds = null) {
+export async function getItemRequest(db, id, buIds = null, ctx = null) {
   const request = await repository.findById(db, id);
   if (!request) throw new NotFoundError(`Item request ${id} not found`);
   assertRowInScope(request, buIds, 'item request');
+  // 404, not 403: an external system must not learn that someone else's request exists.
+  if (ownRequestsOnly(ctx) && !isOwnRequest(request, ctx)) throw new NotFoundError(`Item request ${id} not found`);
   return { data: request };
 }
 
@@ -113,6 +125,15 @@ async function notifyNewRequest(db, request) {
   }
 }
 
+// The same external_ref again means "this is a retry": hand back the earlier request. But for an
+// external system an external_ref already used by SOMEONE ELSE in the BU must not return their request.
+function duplicateResult(existing, ctx) {
+  if (ownRequestsOnly(ctx) && !isOwnRequest(existing, ctx)) {
+    throw new ConflictError('EXTERNAL_REF_TAKEN', 'external_ref is already used by another requester in this business unit');
+  }
+  return { statusCode: 200, body: { data: existing, meta: { duplicate: true } } };
+}
+
 // Returns { statusCode, body }: 201 for a new request, 200 when the caller's external_ref already
 // exists (the same POST can be retried safely — it returns the earlier request, never a second one).
 export async function createItemRequest(db, body, ctx = {}) {
@@ -121,7 +142,7 @@ export async function createItemRequest(db, body, ctx = {}) {
 
   if (externalRef) {
     const existing = await repository.findByExternalRef(db, buId, externalRef);
-    if (existing) return { statusCode: 200, body: { data: existing, meta: { duplicate: true } } };
+    if (existing) return duplicateResult(existing, ctx);
   }
 
   const payload = {
@@ -143,7 +164,7 @@ export async function createItemRequest(db, body, ctx = {}) {
     // returns it.
     if (externalRef && error.code === 'ER_DUP_ENTRY') {
       const existing = await repository.findByExternalRef(db, buId, externalRef);
-      if (existing) return { statusCode: 200, body: { data: existing, meta: { duplicate: true } } };
+      if (existing) return duplicateResult(existing, ctx);
     }
     throw error;
   }
@@ -222,6 +243,7 @@ export async function cancelItemRequest(db, id, { note = null } = {}, ctx = {}) 
   const request = await repository.findById(db, id);
   if (!request) throw new NotFoundError(`Item request ${id} not found`);
   assertRowInScope(request, ctx.buIds ?? null, 'item request');
+  if (ownRequestsOnly(ctx) && !isOwnRequest(request, ctx)) throw new NotFoundError(`Item request ${id} not found`);
 
   const isRequester = request.requested_by != null && Number(request.requested_by) === Number(ctx.userId);
   const isHandler = can(ctx.role, 'item-requests', 'handle');
