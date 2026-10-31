@@ -1,0 +1,165 @@
+{
+  "info": {
+    "name": "ERP integrasi - API User ke warkas (uji coba)",
+    "description": "Isi variabel koleksi `api_token` dengan token API User (jangan di-commit/dibagikan). Jalankan berurutan 1 -> 6. Token akses berlaku 15 menit; kalau dapat 401, jalankan lagi request 1.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }]
+  },
+  "variable": [
+    { "key": "auth_base", "value": "https://auth.itpintar.co.id" },
+    { "key": "wms_base", "value": "https://api-wms.itpintar.co.id" },
+    { "key": "api_token", "value": "", "description": "Token API User (api_...). Isi di sini, JANGAN di tempat lain." },
+    { "key": "access_token", "value": "" },
+    { "key": "request_id", "value": "" },
+    { "key": "external_ref", "value": "REQ-2026-10-0043" }
+  ],
+  "item": [
+    {
+      "name": "1. Tukar token API -> token akses (15 menit)",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"api_token\": \"{{api_token}}\"\n}" },
+        "url": { "raw": "{{auth_base}}/auth/api-token", "host": ["{{auth_base}}"], "path": ["auth", "api-token"] }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status 200', () => pm.response.to.have.status(200));",
+              "const data = pm.response.json().data || {};",
+              "pm.test('ada access_token', () => pm.expect(data.access_token).to.be.a('string'));",
+              "if (data.access_token) {",
+              "  pm.collectionVariables.set('access_token', data.access_token);",
+              "  const claims = JSON.parse(atob(data.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));",
+              "  pm.test('role integration-requester', () => pm.expect(claims.role).to.eql('integration-requester'));",
+              "  console.log('bu_ids:', JSON.stringify(claims.bu_ids), '| berlaku', claims.exp - claims.iat, 'detik');",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Daftar gudang (cari warehouse_id dari kode)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": { "raw": "{{wms_base}}/api/warehouses", "host": ["{{wms_base}}"], "path": ["api", "warehouses"] }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status 200', () => pm.response.to.have.status(200));",
+              "(pm.response.json().data || []).forEach(w => console.log('id=' + w.id + '  kode=' + w.code + '  nama=' + w.name));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Ajukan permintaan barang",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"description\": \"[UJI COBA] Test from Postman, Mohon dikirim 20 pcs Kabel HDMI 1.5m dan 5 pcs Mouse Wireless.\",\n  \"subject\": \"Permintaan Kabel HDMI & Mouse\",\n  \"requester_name\": \"Yozan\",\n  \"warehouse_id\": 15,\n  \"source\": \"postman\",\n  \"external_ref\": \"{{external_ref}}\"\n}"
+        },
+        "url": { "raw": "{{wms_base}}/api/item-requests", "host": ["{{wms_base}}"], "path": ["api", "item-requests"] }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 (baru) atau 200 (retry external_ref yang sama)', () => pm.expect([200, 201]).to.include(pm.response.code));",
+              "const body = pm.response.json();",
+              "if (body.data && body.data.id) {",
+              "  pm.collectionVariables.set('request_id', String(body.data.id));",
+              "  console.log(body.data.request_number, '| status', body.data.status, '| duplicate:', !!(body.meta && body.meta.duplicate));",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Lihat permintaan milik saya (by external_ref)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{wms_base}}/api/item-requests?external_ref={{external_ref}}",
+          "host": ["{{wms_base}}"],
+          "path": ["api", "item-requests"],
+          "query": [{ "key": "external_ref", "value": "{{external_ref}}" }]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status 200', () => pm.response.to.have.status(200));",
+              "pm.test('tepat 1 permintaan', () => pm.expect(pm.response.json().data.length).to.eql(1));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Uji penolakan: baca stok (HARUS 403)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": { "raw": "{{wms_base}}/api/stocks", "host": ["{{wms_base}}"], "path": ["api", "stocks"] }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": ["pm.test('403 - role ini tidak boleh membaca stok', () => pm.response.to.have.status(403));"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Batalkan permintaan uji",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"note\": \"uji coba selesai\"\n}" },
+        "url": {
+          "raw": "{{wms_base}}/api/item-requests/{{request_id}}/cancel",
+          "host": ["{{wms_base}}"],
+          "path": ["api", "item-requests", "{{request_id}}", "cancel"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status 200', () => pm.response.to.have.status(200));",
+              "pm.test('status CANCELLED', () => pm.expect(pm.response.json().data.status).to.eql('CANCELLED'));"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

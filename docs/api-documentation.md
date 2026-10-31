@@ -1138,6 +1138,10 @@ peminta (inbox + push, tipe `item_request`). Tidak ada notifikasi ke diri sendir
 
 Sistem luar memakai **endpoint yang sama** dengan aplikasi; tidak ada API terpisah.
 
+> **Panduan lengkap untuk developer sistem luar** (alur dua langkah, contoh kode cURL/Node.js/Python/PHP, tabel kesalahan,
+> keamanan, daftar periksa uji coba): [`panduan-integrasi-erp.md`](panduan-integrasi-erp.md). Koleksi Postman-nya:
+> [`postman/erp-integrasi.postman_collection.json`](postman/erp-integrasi.postman_collection.json). Ringkasannya di bawah.
+
 1. **Autentikasi — pakai token milik API User, bukan login + refresh token.** Minta admin auth membuat satu **API User**
    di admin console auth (`https://admin.itpintar.co.id` → menu **API Users** → **+ Tambah API User**): Service
    *Warehouse Management System*, Business Unit yang dituju, role **`integration-requester`**, dan centang **IP Strict**
